@@ -42,8 +42,8 @@
       return { mode: "native-video", originalUrl, playerUrl: originalUrl, titleHint: originalUrl, reason: "" };
     }
 
-    const youtubeId = getYoutubeId(url, host);
-    if (youtubeId) {
+    const youtube = getYoutubeVideo(url, host);
+    if (youtube.id) {
       const params = new URLSearchParams({
         playsinline: "1",
         autoplay: "1",
@@ -54,8 +54,9 @@
       return {
         mode: "youtube",
         originalUrl,
-        playerUrl: `https://www.youtube.com/embed/${youtubeId}?${params.toString()}`,
-        titleHint: `YouTube ${youtubeId}`,
+        playerUrl: `https://www.youtube.com/embed/${youtube.id}?${params.toString()}`,
+        titleHint: `YouTube ${youtube.id}`,
+        isLive: youtube.isLive,
         reason: "",
       };
     }
@@ -85,15 +86,36 @@
     return base;
   }
 
-  function getYoutubeId(url, host) {
+  function getYoutubeVideo(url, host) {
+    const result = { id: "", isLive: false };
+
     if (host === "youtu.be") {
-      return cleanVideoId(url.pathname.slice(1));
+      result.id = cleanVideoId(url.pathname.slice(1));
+      return result;
     }
-    if ((host === "youtube.com" || host === "m.youtube.com") && url.pathname === "/watch") {
-      return cleanVideoId(url.searchParams.get("v"));
+
+    const youtubeHosts = new Set(["youtube.com", "m.youtube.com"]);
+    if (!youtubeHosts.has(host)) {
+      return result;
     }
-    const shorts = host === "youtube.com" || host === "m.youtube.com" ? url.pathname.match(/^\/shorts\/([^/?#]+)/) : null;
-    return shorts ? cleanVideoId(shorts[1]) : "";
+
+    if (url.pathname === "/watch") {
+      result.id = cleanVideoId(url.searchParams.get("v"));
+      return result;
+    }
+
+    const live = url.pathname.match(/^\/live\/([^/?#]+)/);
+    if (live) {
+      result.id = cleanVideoId(live[1]);
+      result.isLive = true;
+      return result;
+    }
+
+    const shorts = url.pathname.match(/^\/shorts\/([^/?#]+)/);
+    if (shorts) {
+      result.id = cleanVideoId(shorts[1]);
+    }
+    return result;
   }
 
   function getDailymotionId(url, host) {

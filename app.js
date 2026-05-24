@@ -25,6 +25,7 @@
     youtubePlaying: false,
     youtubeCurrentTime: null,
     youtubeDuration: 0,
+    youtubeIsLive: false,
     lastSeekCommand: null,
     mediaTitle: "",
     mediaUrl: "",
@@ -128,6 +129,10 @@
     return Number.isFinite(value) && value >= 0 ? value : 0;
   }
 
+  function isPlayableDuration(value) {
+    return Number.isFinite(value) && value > 0;
+  }
+
   function getPlaybackState() {
     if (state.video && state.currentMode === "native-video") {
       return {
@@ -143,7 +148,7 @@
     if (state.iframe && state.currentMode === "youtube") {
       return {
         currentTime: finiteSeconds(state.youtubeCurrentTime),
-        duration: finiteSeconds(state.youtubeDuration),
+        duration: isPlayableDuration(state.youtubeDuration) ? state.youtubeDuration : 0,
         playing: state.youtubePlaying,
         mode: "youtube",
         title: state.mediaTitle,
@@ -278,8 +283,8 @@
       };
     }
 
-    const youtubeId = getYoutubeId(url, host);
-    if (youtubeId) {
+    const youtube = getYoutubeVideo(url, host);
+    if (youtube.id) {
       const params = new URLSearchParams({
         playsinline: "1",
         autoplay: "1",
@@ -290,8 +295,9 @@
       return {
         mode: "youtube",
         originalUrl,
-        playerUrl: `https://www.youtube.com/embed/${youtubeId}?${params.toString()}`,
-        titleHint: `YouTube ${youtubeId}`,
+        playerUrl: `https://www.youtube.com/embed/${youtube.id}?${params.toString()}`,
+        titleHint: `YouTube ${youtube.id}`,
+        isLive: youtube.isLive,
         reason: "",
       };
     }
@@ -321,22 +327,36 @@
     return base;
   }
 
-  function getYoutubeId(url, host) {
+  function getYoutubeVideo(url, host) {
+    const result = { id: "", isLive: false };
+
     if (host === "youtu.be") {
-      return cleanVideoId(url.pathname.slice(1));
+      result.id = cleanVideoId(url.pathname.slice(1));
+      return result;
     }
 
     const youtubeHosts = new Set(["youtube.com", "m.youtube.com"]);
     if (!youtubeHosts.has(host)) {
-      return "";
+      return result;
     }
 
     if (url.pathname === "/watch") {
-      return cleanVideoId(url.searchParams.get("v"));
+      result.id = cleanVideoId(url.searchParams.get("v"));
+      return result;
+    }
+
+    const live = url.pathname.match(/^\/live\/([^/?#]+)/);
+    if (live) {
+      result.id = cleanVideoId(live[1]);
+      result.isLive = true;
+      return result;
     }
 
     const shorts = url.pathname.match(/^\/shorts\/([^/?#]+)/);
-    return shorts ? cleanVideoId(shorts[1]) : "";
+    if (shorts) {
+      result.id = cleanVideoId(shorts[1]);
+    }
+    return result;
   }
 
   function getDailymotionId(url, host) {
@@ -367,6 +387,7 @@
     state.youtubePlaying = false;
     state.youtubeCurrentTime = null;
     state.youtubeDuration = 0;
+    state.youtubeIsLive = false;
     state.lastSeekCommand = null;
     state.mediaTitle = "";
     state.mediaUrl = "";
@@ -441,7 +462,10 @@
     const iframe = document.createElement("iframe");
     iframe.id = `player-${media.mode}`;
     iframe.src = media.playerUrl;
-    iframe.allow = "autoplay; fullscreen; picture-in-picture";
+    iframe.allow =
+      media.mode === "youtube"
+        ? "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+        : "autoplay; fullscreen; picture-in-picture";
     iframe.allowFullscreen = true;
     iframe.title = media.titleHint || "Embedded video player";
     iframe.addEventListener("load", () => {
@@ -458,6 +482,7 @@
     els.playerHost.replaceChildren(iframe);
     state.iframe = iframe;
     state.youtubePlaying = media.mode === "youtube";
+    state.youtubeIsLive = Boolean(media.isLive);
     setPlaybackActive(true);
     startStatePublishing();
 
@@ -546,7 +571,16 @@
     postToYoutube("getCurrentTime");
   }
 
+  function youtubeTimelineUnavailable() {
+    return state.youtubeIsLive;
+  }
+
   function seekYoutubeTo(time) {
+    if (youtubeTimelineUnavailable()) {
+      setStatus("Timeline unavailable for this live stream.");
+      publishPlaybackState(true);
+      return;
+    }
     const nextTime = Math.max(0, finiteSeconds(time));
     state.youtubeCurrentTime = nextTime;
     postToYoutube("seekTo", [nextTime, true]);
@@ -554,6 +588,12 @@
   }
 
   function sendYoutubeSeek(command) {
+    if (youtubeTimelineUnavailable()) {
+      setStatus("Timeline unavailable for this live stream.");
+      publishPlaybackState(true);
+      return;
+    }
+
     if (typeof state.youtubeCurrentTime !== "number" || Number.isNaN(state.youtubeCurrentTime)) {
       requestYoutubeTime();
       setCommandStatus(command, "sent. YouTube seek may be limited until playback starts");
@@ -819,6 +859,32 @@
     return data && typeof data === "object" ? data : null;
   }
 
+  function normalizeYoutubeDuration(value) {
+    return isPlayableDuration(value) ? value : 0;
+  }
+
+  function getYoutubeErrorMessage(errorInfo) {
+    const rawCode =
+      errorInfo && typeof errorInfo === "object" && "errorCode" in errorInfo ? errorInfo.errorCode : errorInfo;
+    const numericCode = Number(rawCode);
+    const debug = Number.isFinite(numericCode) ? ` Details: YouTube error ${numericCode}.` : "";
+    const liveLike = state.youtubeIsLive || !isPlayableDuration(state.youtubeDuration);
+
+    if (liveLike && [101, 150].includes(numericCode)) {
+      return `This live stream may require YouTube sign-in or may not allow embeds.${debug}`;
+    }
+
+    if ([101, 150].includes(numericCode)) {
+      return `This YouTube video cannot be played in an embedded player.${debug}`;
+    }
+
+    if (liveLike || [2, 5, 100].includes(numericCode)) {
+      return `This live stream may be restricted or unavailable.${debug}`;
+    }
+
+    return `This YouTube video cannot be played in an embedded player.${debug}`;
+  }
+
   function handlePlayerMessage(event) {
     if (!state.iframe || event.source !== state.iframe.contentWindow) {
       return;
@@ -834,7 +900,7 @@
         state.youtubeCurrentTime = data.info.currentTime;
       }
       if (typeof data.info.duration === "number") {
-        state.youtubeDuration = data.info.duration;
+        state.youtubeDuration = normalizeYoutubeDuration(data.info.duration);
       }
       if (data.info.videoData && typeof data.info.videoData.title === "string" && data.info.videoData.title.trim()) {
         state.mediaTitle = data.info.videoData.title.trim();
@@ -854,7 +920,7 @@
     if (state.currentMode === "youtube" && data.event === "onError") {
       state.youtubePlaying = false;
       setPlaybackActive(false);
-      setStatus("YouTube player reported an error.", true);
+      setStatus(getYoutubeErrorMessage(data.info), true);
       publishPlaybackState(true);
     }
 
