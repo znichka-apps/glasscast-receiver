@@ -1,7 +1,8 @@
 const sessions = globalThis.__glasscastSessions || new Map();
 globalThis.__glasscastSessions = sessions;
 
-const COMMANDS = new Set(["playPause", "play", "pause", "seekBack", "seekForward", "stop", "fullscreen"]);
+const COMMANDS = new Set(["playPause", "play", "pause", "seekBack", "seekForward", "seekTo", "stop", "fullscreen"]);
+const MODES = new Set(["native-video", "youtube", "vimeo", "dailymotion", "unsupported", "idle"]);
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -43,6 +44,33 @@ function commandId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function seconds(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 0;
+}
+
+function cleanState(value) {
+  const input = value && typeof value === "object" ? value : {};
+  const mode = MODES.has(input.mode) ? input.mode : "idle";
+  const title = String(input.title || "").trim();
+  const url = String(input.url || "").trim();
+  const state = {
+    currentTime: seconds(input.currentTime),
+    duration: seconds(input.duration),
+    playing: Boolean(input.playing),
+    mode,
+  };
+
+  if (title) {
+    state.title = title.slice(0, 300);
+  }
+  if (url) {
+    state.url = url.slice(0, 2000);
+  }
+
+  return state;
+}
+
 module.exports = async function handler(req, res) {
   if (req.method === "GET") {
     const requestUrl = new URL(req.url, "http://localhost");
@@ -58,7 +86,12 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    json(res, 200, { ok: true, ...latest });
+    if (requestUrl.pathname === "/api/session/state" || requestUrl.searchParams.get("state") === "1") {
+      json(res, 200, { ok: true, state: latest.state || null });
+      return;
+    }
+
+    json(res, 200, { ok: true, ...(latest.command || {}), state: latest.state || null });
     return;
   }
 
@@ -84,7 +117,8 @@ module.exports = async function handler(req, res) {
         return;
       }
       const payload = { commandId: commandId(), type: "cast", url };
-      sessions.set(code, payload);
+      const latest = sessions.get(code) || {};
+      sessions.set(code, { ...latest, command: payload });
       json(res, 200, { ok: true, commandId: payload.commandId });
       return;
     }
@@ -96,8 +130,19 @@ module.exports = async function handler(req, res) {
         return;
       }
       const payload = { commandId: commandId(), type: "command", command };
-      sessions.set(code, payload);
+      if (command === "seekTo") {
+        payload.time = seconds(body.time);
+      }
+      const latest = sessions.get(code) || {};
+      sessions.set(code, { ...latest, command: payload });
       json(res, 200, { ok: true, commandId: payload.commandId });
+      return;
+    }
+
+    if (body.type === "state") {
+      const latest = sessions.get(code) || {};
+      sessions.set(code, { ...latest, state: cleanState(body.state), stateUpdatedAt: Date.now() });
+      json(res, 200, { ok: true });
       return;
     }
 

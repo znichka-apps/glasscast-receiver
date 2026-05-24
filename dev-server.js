@@ -40,7 +40,7 @@ function serveFile(res, filePath) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
-  if (url.pathname === "/api/session") {
+  if (url.pathname === "/api/session" || url.pathname === "/api/session/state") {
     sessionHandler(req, res);
     return;
   }

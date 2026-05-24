@@ -4,6 +4,8 @@ GlassCast Receiver is a tiny Cast-like video receiver for Meta Ray-Ban Display g
 
 The glasses display opens `index.html`, generates a short session code, and polls a simple Vercel API route every 700ms. A phone opens `/phone`, enters that code, and sends video URLs or playback commands.
 
+The receiver also publishes playback state about once per second while media is loaded so a controller can show a scrubber.
+
 ## Local Testing
 
 Install dependencies:
@@ -60,6 +62,62 @@ GlassCast accepts:
 - Dailymotion URLs in the form `dailymotion.com/video/VIDEO_ID` or `dai.ly/VIDEO_ID`
 
 YouTube links are converted to an embed URL with `enablejsapi=1`. Vimeo and Dailymotion links are converted to their player embeds.
+
+## Session API
+
+Send a playback command:
+
+```json
+{
+  "code": "ABC123",
+  "type": "command",
+  "command": "seekTo",
+  "time": 123.4
+}
+```
+
+Supported commands are `playPause`, `play`, `pause`, `seekBack`, `seekForward`, `seekTo`, `stop`, and `fullscreen`. `seekTo` uses seconds from the start of the active media.
+
+The receiver publishes playback state with:
+
+```json
+{
+  "code": "ABC123",
+  "type": "state",
+  "state": {
+    "currentTime": 123.4,
+    "duration": 999,
+    "playing": true,
+    "mode": "youtube",
+    "title": "YouTube video",
+    "url": "https://..."
+  }
+}
+```
+
+Controllers can read state with:
+
+```text
+GET /api/session/state?code=ABC123
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "state": {
+    "currentTime": 123.4,
+    "duration": 999,
+    "playing": true,
+    "mode": "youtube",
+    "title": "YouTube video",
+    "url": "https://..."
+  }
+}
+```
+
+For compatibility, `GET /api/session?code=ABC123` also includes `state` alongside the latest command payload.
 
 ## Limitations
 

@@ -24,11 +24,18 @@
     iframe: null,
     youtubePlaying: false,
     youtubeCurrentTime: null,
+    youtubeDuration: 0,
     lastSeekCommand: null,
+    mediaTitle: "",
+    mediaUrl: "",
     pendingPlay: false,
     overlayVisible: true,
     isPlaying: false,
     overlayHideTimer: null,
+    statePublishTimer: null,
+    statePublishTimeout: null,
+    lastStatePublishAt: 0,
+    statePublishInFlight: false,
     pollTimer: null,
   };
 
@@ -115,6 +122,119 @@
     } else {
       showOverlay();
     }
+  }
+
+  function finiteSeconds(value) {
+    return Number.isFinite(value) && value >= 0 ? value : 0;
+  }
+
+  function getPlaybackState() {
+    if (state.video && state.currentMode === "native-video") {
+      return {
+        currentTime: finiteSeconds(state.video.currentTime),
+        duration: finiteSeconds(state.video.duration),
+        playing: !state.video.paused && !state.video.ended,
+        mode: "native-video",
+        title: state.mediaTitle,
+        url: state.mediaUrl,
+      };
+    }
+
+    if (state.iframe && state.currentMode === "youtube") {
+      return {
+        currentTime: finiteSeconds(state.youtubeCurrentTime),
+        duration: finiteSeconds(state.youtubeDuration),
+        playing: state.youtubePlaying,
+        mode: "youtube",
+        title: state.mediaTitle,
+        url: state.mediaUrl,
+      };
+    }
+
+    if (state.iframe && ["vimeo", "dailymotion"].includes(state.currentMode)) {
+      return {
+        currentTime: 0,
+        duration: 0,
+        playing: state.isPlaying,
+        mode: state.currentMode,
+        title: state.mediaTitle,
+        url: state.mediaUrl,
+      };
+    }
+
+    return {
+      currentTime: 0,
+      duration: 0,
+      playing: false,
+      mode: state.currentMode === "unsupported" ? "unsupported" : "idle",
+      title: state.mediaTitle,
+      url: state.mediaUrl,
+    };
+  }
+
+  async function publishPlaybackState(force) {
+    const now = Date.now();
+    const waitMs = 1000 - (now - state.lastStatePublishAt);
+
+    if (!force && waitMs > 0) {
+      return;
+    }
+
+    if (force && waitMs > 0) {
+      if (!state.statePublishTimeout) {
+        state.statePublishTimeout = window.setTimeout(() => {
+          state.statePublishTimeout = null;
+          publishPlaybackState(true);
+        }, waitMs);
+      }
+      return;
+    }
+
+    if (state.statePublishInFlight) {
+      return;
+    }
+
+    state.lastStatePublishAt = now;
+    state.statePublishInFlight = true;
+    try {
+      await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: state.code, type: "state", state: getPlaybackState() }),
+      });
+    } catch {
+      // State updates are advisory; command polling remains the user-visible connection signal.
+    } finally {
+      state.statePublishInFlight = false;
+    }
+  }
+
+  function requestPlayerState() {
+    if (state.currentMode === "youtube") {
+      postToYoutube("getCurrentTime");
+      postToYoutube("getDuration");
+    }
+  }
+
+  function clearStatePublishTimer() {
+    if (state.statePublishTimer) {
+      window.clearInterval(state.statePublishTimer);
+      state.statePublishTimer = null;
+    }
+    if (state.statePublishTimeout) {
+      window.clearTimeout(state.statePublishTimeout);
+      state.statePublishTimeout = null;
+    }
+  }
+
+  function startStatePublishing() {
+    clearStatePublishTimer();
+    requestPlayerState();
+    publishPlaybackState(true);
+    state.statePublishTimer = window.setInterval(() => {
+      requestPlayerState();
+      publishPlaybackState(false);
+    }, 1000);
   }
 
   function titleFromUrl(url) {
@@ -238,6 +358,7 @@
 
   function clearPlayer() {
     clearOverlayHideTimer();
+    clearStatePublishTimer();
     els.tapToPlay.classList.add("hidden");
     els.playerHost.replaceChildren();
     state.video = null;
@@ -245,12 +366,16 @@
     state.currentMode = null;
     state.youtubePlaying = false;
     state.youtubeCurrentTime = null;
+    state.youtubeDuration = 0;
     state.lastSeekCommand = null;
+    state.mediaTitle = "";
+    state.mediaUrl = "";
     state.pendingPlay = false;
     state.isPlaying = false;
     els.shell.classList.remove("has-video", "has-critical-status");
     els.overlay.classList.remove("overlay-hidden");
     els.overlay.classList.add("overlay-visible");
+    publishPlaybackState(true);
   }
 
   async function castVideo(url) {
@@ -258,6 +383,10 @@
     clearPlayer();
 
     if (media.mode === "unsupported") {
+      state.currentMode = "unsupported";
+      state.mediaTitle = "";
+      state.mediaUrl = media.originalUrl;
+      publishPlaybackState(true);
       renderEmpty("Unsupported link", media.reason);
       setNowPlaying("Nothing yet");
       setStatus(media.reason, true);
@@ -265,6 +394,8 @@
     }
 
     state.currentMode = media.mode;
+    state.mediaTitle = media.titleHint || media.originalUrl;
+    state.mediaUrl = media.originalUrl;
     setNowPlaying(media.titleHint || media.originalUrl);
     showCodeOverlay(true);
     showOverlay();
@@ -280,21 +411,29 @@
         els.tapToPlay.classList.add("hidden");
         state.pendingPlay = false;
         setPlaybackActive(true);
+        publishPlaybackState(true);
       });
       video.addEventListener("pause", () => {
         setPlaybackActive(false);
+        publishPlaybackState(true);
       });
+      video.addEventListener("loadedmetadata", () => publishPlaybackState(true));
+      video.addEventListener("seeked", () => publishPlaybackState(true));
+      video.addEventListener("timeupdate", () => publishPlaybackState(false));
       video.addEventListener("ended", () => {
         setPlaybackActive(false);
         setStatus("Playback ended.");
+        publishPlaybackState(true);
       });
       video.addEventListener("error", () => {
         setPlaybackActive(false);
         setStatus("The video could not be loaded. Try another direct file URL.", true);
+        publishPlaybackState(true);
       });
       els.playerHost.replaceChildren(video);
       state.video = video;
       els.shell.classList.add("has-video");
+      startStatePublishing();
       await tryPlay();
       return;
     }
@@ -308,7 +447,7 @@
     iframe.addEventListener("load", () => {
       if (media.mode === "youtube") {
         state.iframe?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: iframe.id }), "*");
-        requestYoutubeTime();
+        requestPlayerState();
         if (state.youtubePlaying) {
           setPlaybackActive(true);
         }
@@ -320,6 +459,7 @@
     state.iframe = iframe;
     state.youtubePlaying = media.mode === "youtube";
     setPlaybackActive(true);
+    startStatePublishing();
 
     if (media.mode === "youtube") {
       setStatus("YouTube controls may require tapping play on the display.");
@@ -406,6 +546,13 @@
     postToYoutube("getCurrentTime");
   }
 
+  function seekYoutubeTo(time) {
+    const nextTime = Math.max(0, finiteSeconds(time));
+    state.youtubeCurrentTime = nextTime;
+    postToYoutube("seekTo", [nextTime, true]);
+    publishPlaybackState(true);
+  }
+
   function sendYoutubeSeek(command) {
     if (typeof state.youtubeCurrentTime !== "number" || Number.isNaN(state.youtubeCurrentTime)) {
       requestYoutubeTime();
@@ -415,12 +562,11 @@
 
     const offset = command === "seekBack" ? -SEEK_SECONDS : SEEK_SECONDS;
     const nextTime = Math.max(0, state.youtubeCurrentTime + offset);
-    state.youtubeCurrentTime = nextTime;
-    postToYoutube("seekTo", [nextTime, true]);
+    seekYoutubeTo(nextTime);
     setCommandStatus(command, "sent to YouTube");
   }
 
-  function sendYoutubeCommand(command) {
+  function sendYoutubeCommand(command, time) {
     if (command === "playPause") {
       if (state.youtubePlaying) {
         postToYoutube("pauseVideo");
@@ -431,6 +577,7 @@
         state.youtubePlaying = true;
         setPlaybackActive(true);
       }
+      publishPlaybackState(true);
       setStatus("Sent play/pause to YouTube. Command: playPause sent");
       return;
     }
@@ -439,6 +586,7 @@
       postToYoutube("playVideo");
       state.youtubePlaying = true;
       setPlaybackActive(true);
+      publishPlaybackState(true);
       setStatus("Sent play to YouTube. Command: play sent");
       return;
     }
@@ -447,6 +595,7 @@
       postToYoutube("pauseVideo");
       state.youtubePlaying = false;
       setPlaybackActive(false);
+      publishPlaybackState(true);
       setStatus("Sent pause to YouTube. Command: pause sent");
       return;
     }
@@ -455,12 +604,19 @@
       postToYoutube("stopVideo");
       state.youtubePlaying = false;
       setPlaybackActive(false);
+      publishPlaybackState(true);
       setStatus("Sent stop to YouTube. Command: stop sent");
       return;
     }
 
     if (command === "seekBack" || command === "seekForward") {
       sendYoutubeSeek(command);
+      return;
+    }
+
+    if (command === "seekTo") {
+      seekYoutubeTo(time);
+      setCommandStatus(command, "sent to YouTube");
       return;
     }
 
@@ -477,7 +633,7 @@
     return true;
   }
 
-  function sendVimeoCommand(command) {
+  function sendVimeoCommand(command, time) {
     const methodMap = {
       playPause: state.isPlaying ? "pause" : "play",
       play: "play",
@@ -500,6 +656,13 @@
       return;
     }
 
+    if (command === "seekTo") {
+      postObjectToIframe({ method: "setCurrentTime", value: finiteSeconds(time) });
+      setCommandStatus(command, "sent. Controls may be limited for this player");
+      publishPlaybackState(true);
+      return;
+    }
+
     if (method) {
       postObjectToIframe({ method });
       if (command === "play" || (command === "playPause" && !state.isPlaying)) {
@@ -507,6 +670,7 @@
       } else if (command === "pause" || command === "stop" || command === "playPause") {
         setPlaybackActive(false);
       }
+      publishPlaybackState(true);
       setCommandStatus(command, "sent. Controls may be limited for this player");
       return;
     }
@@ -514,7 +678,7 @@
     setCommandStatus(command, "not supported. Controls may be limited for this player");
   }
 
-  function sendDailymotionCommand(command) {
+  function sendDailymotionCommand(command, time) {
     const commandMap = {
       playPause: state.isPlaying ? "pause" : "play",
       play: "play",
@@ -536,6 +700,13 @@
       return;
     }
 
+    if (command === "seekTo") {
+      postObjectToIframe({ command: "seek", parameters: [finiteSeconds(time)] });
+      setCommandStatus(command, "sent. Controls may be limited for this player");
+      publishPlaybackState(true);
+      return;
+    }
+
     if (playerCommand) {
       postObjectToIframe({ command: playerCommand });
       if (command === "play" || (command === "playPause" && !state.isPlaying)) {
@@ -543,6 +714,7 @@
       } else if (command === "pause" || command === "stop" || command === "playPause") {
         setPlaybackActive(false);
       }
+      publishPlaybackState(true);
       setCommandStatus(command, "sent. Controls may be limited for this player");
       return;
     }
@@ -550,7 +722,7 @@
     setCommandStatus(command, "not supported. Controls may be limited for this player");
   }
 
-  async function handleNativeVideoCommand(command) {
+  async function handleNativeVideoCommand(command, time) {
     const video = state.video;
     if (!video) {
       setCommandStatus(command, "ignored. No active video", true);
@@ -577,28 +749,34 @@
     } else if (command === "seekForward") {
       video.currentTime = Math.min(video.duration || Infinity, video.currentTime + SEEK_SECONDS);
       setCommandStatus(command, "sent");
+    } else if (command === "seekTo") {
+      const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
+      video.currentTime = Math.min(duration, Math.max(0, finiteSeconds(time)));
+      publishPlaybackState(true);
+      setCommandStatus(command, "sent");
     } else if (command === "stop") {
       video.pause();
       video.currentTime = 0;
       setPlaybackActive(false);
+      publishPlaybackState(true);
       setCommandStatus(command, "sent");
     } else if (command === "fullscreen") {
       requestFullscreen(els.playerHost, command);
     }
   }
 
-  async function handlePlaybackCommand(command) {
+  async function handlePlaybackCommand(command, time) {
     showOverlayTemporarily();
 
     const mode = getActivePlayerMode();
     if (mode === "native-video") {
-      await handleNativeVideoCommand(command);
+      await handleNativeVideoCommand(command, time);
     } else if (mode === "youtube") {
-      sendYoutubeCommand(command);
+      sendYoutubeCommand(command, time);
     } else if (mode === "vimeo") {
-      sendVimeoCommand(command);
+      sendVimeoCommand(command, time);
     } else if (mode === "dailymotion") {
-      sendDailymotionCommand(command);
+      sendDailymotionCommand(command, time);
     } else {
       setCommandStatus(command, "ignored. No active player", true);
     }
@@ -616,7 +794,7 @@
       return;
     }
 
-    await handlePlaybackCommand(payload.command);
+    await handlePlaybackCommand(payload.command, payload.time);
   }
 
   function requestFullscreen(el, command) {
@@ -655,31 +833,44 @@
       if (typeof data.info.currentTime === "number") {
         state.youtubeCurrentTime = data.info.currentTime;
       }
+      if (typeof data.info.duration === "number") {
+        state.youtubeDuration = data.info.duration;
+      }
+      if (data.info.videoData && typeof data.info.videoData.title === "string" && data.info.videoData.title.trim()) {
+        state.mediaTitle = data.info.videoData.title.trim();
+        setNowPlaying(state.mediaTitle);
+      }
       if (typeof data.info.playerState === "number") {
         const wasPlaying = state.youtubePlaying;
         state.youtubePlaying = data.info.playerState === 1;
         if ([0, 1, 2].includes(data.info.playerState) && wasPlaying !== state.youtubePlaying) {
           setPlaybackActive(data.info.playerState === 1);
+          publishPlaybackState(true);
         }
       }
+      publishPlaybackState(false);
     }
 
     if (state.currentMode === "youtube" && data.event === "onError") {
       state.youtubePlaying = false;
       setPlaybackActive(false);
       setStatus("YouTube player reported an error.", true);
+      publishPlaybackState(true);
     }
 
     if (state.currentMode === "vimeo") {
       if (data.event === "play") {
         setPlaybackActive(true);
+        publishPlaybackState(true);
       } else if (data.event === "pause" || data.event === "ended") {
         setPlaybackActive(false);
+        publishPlaybackState(true);
       } else if (data.method === "getCurrentTime" && typeof data.value === "number") {
         const nextTime =
           state.lastSeekCommand === "seekBack" ? Math.max(0, data.value - SEEK_SECONDS) : data.value + SEEK_SECONDS;
         postObjectToIframe({ method: "setCurrentTime", value: nextTime });
         state.lastSeekCommand = null;
+        publishPlaybackState(true);
       }
     }
   }

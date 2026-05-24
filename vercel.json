@@ -3,6 +3,10 @@
     {
       "source": "/phone",
       "destination": "/phone.html"
+    },
+    {
+      "source": "/api/session/state",
+      "destination": "/api/session?state=1"
     }
   ]
 }
