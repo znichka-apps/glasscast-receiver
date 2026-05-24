@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GlassCast Phone Controller</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="phone-page">
+    <main class="phone-shell">
+      <header class="phone-header">
+        <p class="eyebrow">GlassCast Receiver</p>
+        <h1>Phone Controller</h1>
+      </header>
+
+      <form id="castForm" class="phone-card">
+        <label for="codeInput">Session code</label>
+        <input id="codeInput" name="code" inputmode="text" autocomplete="off" maxlength="8" placeholder="ABC123" required>
+
+        <label for="urlInput">Video URL</label>
+        <textarea id="urlInput" name="url" rows="3" placeholder="https://www.youtube.com/watch?v=..." required></textarea>
+
+        <button class="primary-action" type="submit">Cast Video</button>
+
+        <div class="helper-text">
+          <p>Paste a direct video link or a supported video page link.</p>
+          <p>YouTube works best with a direct watch/share URL.</p>
+          <p>Random streaming sites with ad popups may not work.</p>
+        </div>
+      </form>
+
+      <section class="phone-card controls-card" aria-label="Playback controls">
+        <div class="control-grid">
+          <button type="button" data-command="playPause">Play/Pause</button>
+          <button type="button" data-command="seekBack">Seek -10s</button>
+          <button type="button" data-command="seekForward">Seek +10s</button>
+          <button type="button" data-command="stop">Stop</button>
+          <button type="button" data-command="fullscreen">Fullscreen</button>
+        </div>
+      </section>
+
+      <p id="phoneStatus" class="phone-status" aria-live="polite">Enter the display code to begin.</p>
+    </main>
+
+    <script src="/phone.js"></script>
+  </body>
+</html>

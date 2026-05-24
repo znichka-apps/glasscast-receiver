@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/phone",
+      "destination": "/phone.html"
+    }
+  ]
+}
