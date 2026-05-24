@@ -48,6 +48,11 @@ textarea {
   overflow: hidden;
 }
 
+.display-shell.has-video {
+  display: block;
+  padding: 0;
+}
+
 .display-header,
 .display-footer,
 .player-panel,
@@ -55,6 +60,42 @@ textarea {
   background: rgba(17, 19, 24, 0.94);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.display-header,
+.display-footer,
+.code-overlay {
+  opacity: 1;
+  transition: opacity 240ms ease;
+}
+
+.display-shell.overlay-hidden .display-header,
+.display-shell.overlay-hidden .display-footer,
+.display-shell.overlay-hidden .code-overlay {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.display-shell.overlay-hidden.has-critical-status .display-footer {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.display-shell.has-video .display-header,
+.display-shell.has-video .display-footer {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  z-index: 6;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38);
+}
+
+.display-shell.has-video .display-header {
+  top: 8px;
+}
+
+.display-shell.has-video .display-footer {
+  bottom: 8px;
 }
 
 .display-header {
@@ -91,6 +132,14 @@ p {
   position: relative;
   min-height: 0;
   overflow: hidden;
+}
+
+.display-shell.has-video .player-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 0;
+  border-radius: 0;
 }
 
 .player-host,
@@ -160,13 +209,17 @@ p {
 
 .code-overlay {
   position: absolute;
-  z-index: 5;
+  z-index: 7;
   top: 108px;
   left: 42px;
   right: 42px;
   padding: 22px 24px 24px;
   text-align: center;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+
+.display-shell.has-video .code-overlay {
+  top: 106px;
 }
 
 .session-code {

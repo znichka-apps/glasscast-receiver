@@ -5,6 +5,7 @@
     "This does not look like a playable video link. Paste a direct video URL or supported video page link.";
 
   const els = {
+    shell: document.getElementById("receiverShell"),
     code: document.getElementById("sessionCode"),
     codeOverlay: document.getElementById("codeOverlay"),
     showCode: document.getElementById("showCodeButton"),
@@ -21,6 +22,9 @@
     video: null,
     iframe: null,
     pendingPlay: false,
+    overlayVisible: true,
+    isPlaying: false,
+    overlayHideTimer: null,
     pollTimer: null,
   };
 
@@ -36,6 +40,12 @@
   function setStatus(message, isError) {
     els.status.textContent = message;
     els.status.classList.toggle("error", Boolean(isError));
+    els.shell.classList.toggle("has-critical-status", Boolean(isError));
+    if (isError) {
+      showOverlay();
+    } else if (state.isPlaying) {
+      scheduleOverlayHide();
+    }
   }
 
   function setNowPlaying(text) {
@@ -45,6 +55,62 @@
   function showCodeOverlay(show) {
     els.codeOverlay.classList.toggle("hidden", !show);
     els.showCode.classList.toggle("hidden", show);
+  }
+
+  function clearOverlayHideTimer() {
+    if (state.overlayHideTimer) {
+      window.clearTimeout(state.overlayHideTimer);
+      state.overlayHideTimer = null;
+    }
+  }
+
+  function shouldKeepOverlayVisible() {
+    return state.pendingPlay || els.status.classList.contains("error") || !state.isPlaying;
+  }
+
+  function showOverlay() {
+    state.overlayVisible = true;
+    els.shell.classList.remove("overlay-hidden");
+    els.shell.classList.add("overlay-visible");
+  }
+
+  function hideOverlay() {
+    state.overlayHideTimer = null;
+
+    if (shouldKeepOverlayVisible()) {
+      showOverlay();
+      return;
+    }
+
+    state.overlayVisible = false;
+    els.shell.classList.add("overlay-hidden");
+    els.shell.classList.remove("overlay-visible");
+  }
+
+  function scheduleOverlayHide() {
+    clearOverlayHideTimer();
+    if (shouldKeepOverlayVisible()) {
+      showOverlay();
+      return;
+    }
+
+    state.overlayHideTimer = window.setTimeout(hideOverlay, 3000);
+  }
+
+  function showOverlayTemporarily() {
+    showOverlay();
+    scheduleOverlayHide();
+  }
+
+  function setPlaybackActive(isPlaying) {
+    state.isPlaying = Boolean(isPlaying);
+    els.shell.classList.toggle("has-video", Boolean(state.video || state.iframe));
+
+    if (state.isPlaying) {
+      showOverlayTemporarily();
+    } else {
+      showOverlay();
+    }
   }
 
   function titleFromUrl(url) {
@@ -160,12 +226,16 @@
   }
 
   function clearPlayer() {
+    clearOverlayHideTimer();
     els.tapToPlay.classList.add("hidden");
     els.playerHost.replaceChildren();
     state.video = null;
     state.iframe = null;
     state.currentMode = null;
     state.pendingPlay = false;
+    state.isPlaying = false;
+    els.shell.classList.remove("has-video", "has-critical-status", "overlay-hidden");
+    els.shell.classList.add("overlay-visible");
   }
 
   async function castVideo(url) {
@@ -181,7 +251,8 @@
 
     state.currentMode = media.mode;
     setNowPlaying(media.titleHint || media.originalUrl);
-    showCodeOverlay(false);
+    showCodeOverlay(true);
+    showOverlay();
 
     if (media.mode === "native-video") {
       const video = document.createElement("video");
@@ -193,12 +264,22 @@
       video.addEventListener("play", () => {
         els.tapToPlay.classList.add("hidden");
         state.pendingPlay = false;
+        setPlaybackActive(true);
+      });
+      video.addEventListener("pause", () => {
+        setPlaybackActive(false);
+      });
+      video.addEventListener("ended", () => {
+        setPlaybackActive(false);
+        setStatus("Playback ended.");
       });
       video.addEventListener("error", () => {
+        setPlaybackActive(false);
         setStatus("The video could not be loaded. Try another direct file URL.", true);
       });
       els.playerHost.replaceChildren(video);
       state.video = video;
+      els.shell.classList.add("has-video");
       await tryPlay();
       return;
     }
@@ -210,6 +291,7 @@
     iframe.title = media.titleHint || "Embedded video player";
     els.playerHost.replaceChildren(iframe);
     state.iframe = iframe;
+    setPlaybackActive(true);
 
     if (media.mode === "youtube") {
       setStatus("YouTube controls may require tapping play on the display.");
@@ -235,9 +317,12 @@
     try {
       await state.video.play();
       els.tapToPlay.classList.add("hidden");
+      state.pendingPlay = false;
+      setPlaybackActive(true);
       setStatus("Playing.");
     } catch {
       state.pendingPlay = true;
+      setPlaybackActive(false);
       els.tapToPlay.classList.remove("hidden");
       els.tapToPlay.focus();
       setStatus("Autoplay blocked. Select Tap to Play on the display.");
@@ -272,6 +357,7 @@
       return;
     }
     state.lastCommandId = payload.commandId;
+    showOverlayTemporarily();
 
     if (payload.type === "cast") {
       await castVideo(payload.url);
@@ -301,6 +387,7 @@
       } else if (command === "stop") {
         state.video.pause();
         state.video.currentTime = 0;
+        setPlaybackActive(false);
         setStatus("Stopped.");
       } else if (command === "fullscreen") {
         requestFullscreen(state.video);
@@ -311,9 +398,11 @@
     if (state.iframe) {
       if (command === "playPause") {
         postToIframe("play");
+        setPlaybackActive(true);
         setStatus("Play/Pause sent. Embedded controls may be limited.");
       } else if (command === "play" || command === "pause") {
         postToIframe(command);
+        setPlaybackActive(command === "play");
         setStatus(`${command[0].toUpperCase()}${command.slice(1)} sent. Embedded controls may be limited.`);
       } else if (command === "fullscreen") {
         requestFullscreen(state.iframe);
@@ -365,6 +454,8 @@
   }
 
   function handleKeys(event) {
+    showOverlayTemporarily();
+
     if (["ArrowUp", "ArrowLeft"].includes(event.key)) {
       event.preventDefault();
       moveFocus("previous");
