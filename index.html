@@ -8,19 +8,29 @@
   </head>
   <body class="display-page">
     <main id="receiverShell" class="display-shell" aria-label="GlassCast Receiver">
-      <header class="display-header">
-        <div>
-          <h1>GlassCast</h1>
-          <p class="prompt">Open /phone on your phone</p>
-        </div>
-        <button id="showCodeButton" class="focusable secondary-button hidden" type="button">Show Code</button>
-      </header>
+      <div id="receiverOverlay" class="receiver-overlay overlay-visible">
+        <header class="display-header">
+          <div>
+            <h1>GlassCast</h1>
+            <p class="prompt">Open /phone on your phone</p>
+          </div>
+          <button id="showCodeButton" class="focusable secondary-button hidden" type="button">Show Code</button>
+        </header>
 
-      <section id="codeOverlay" class="code-overlay" aria-live="polite">
-        <p class="label">Session Code</p>
-        <div id="sessionCode" class="session-code">------</div>
-        <p class="overlay-help">Open /phone on your phone</p>
-      </section>
+        <section id="codeOverlay" class="code-overlay" aria-live="polite">
+          <p class="label">Session Code</p>
+          <div id="sessionCode" class="session-code">------</div>
+          <p class="overlay-help">Open /phone on your phone</p>
+        </section>
+
+        <footer class="display-footer">
+          <div>
+            <p class="label">Now Playing</p>
+            <p id="nowPlaying" class="now-playing">Nothing yet</p>
+          </div>
+          <p id="statusText" class="status-text" aria-live="polite">Waiting for phone command...</p>
+        </footer>
+      </div>
 
       <section class="player-panel" aria-label="Player">
         <div id="playerHost" class="player-host">
@@ -31,14 +41,6 @@
         </div>
         <button id="tapToPlay" class="focusable tap-play hidden" type="button">Tap to Play</button>
       </section>
-
-      <footer class="display-footer">
-        <div>
-          <p class="label">Now Playing</p>
-          <p id="nowPlaying" class="now-playing">Nothing yet</p>
-        </div>
-        <p id="statusText" class="status-text" aria-live="polite">Waiting for phone command...</p>
-      </footer>
     </main>
 
     <script src="/app.js"></script>

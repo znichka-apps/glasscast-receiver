@@ -6,6 +6,7 @@
 
   const els = {
     shell: document.getElementById("receiverShell"),
+    overlay: document.getElementById("receiverOverlay"),
     code: document.getElementById("sessionCode"),
     codeOverlay: document.getElementById("codeOverlay"),
     showCode: document.getElementById("showCodeButton"),
@@ -73,8 +74,8 @@
 
   function showOverlay() {
     state.overlayVisible = true;
-    els.shell.classList.remove("overlay-hidden");
-    els.shell.classList.add("overlay-visible");
+    els.overlay.classList.remove("overlay-hidden");
+    els.overlay.classList.add("overlay-visible");
   }
 
   function hideOverlay() {
@@ -86,8 +87,8 @@
     }
 
     state.overlayVisible = false;
-    els.shell.classList.add("overlay-hidden");
-    els.shell.classList.remove("overlay-visible");
+    els.overlay.classList.add("overlay-hidden");
+    els.overlay.classList.remove("overlay-visible");
   }
 
   function scheduleOverlayHide() {
@@ -247,8 +248,9 @@
     state.lastSeekCommand = null;
     state.pendingPlay = false;
     state.isPlaying = false;
-    els.shell.classList.remove("has-video", "has-critical-status", "overlay-hidden");
-    els.shell.classList.add("overlay-visible");
+    els.shell.classList.remove("has-video", "has-critical-status");
+    els.overlay.classList.remove("overlay-hidden");
+    els.overlay.classList.add("overlay-visible");
   }
 
   async function castVideo(url) {
@@ -307,6 +309,11 @@
       if (media.mode === "youtube") {
         state.iframe?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: iframe.id }), "*");
         requestYoutubeTime();
+        if (state.youtubePlaying) {
+          setPlaybackActive(true);
+        }
+      } else if (state.isPlaying) {
+        scheduleOverlayHide();
       }
     });
     els.playerHost.replaceChildren(iframe);
@@ -655,6 +662,12 @@
           setPlaybackActive(data.info.playerState === 1);
         }
       }
+    }
+
+    if (state.currentMode === "youtube" && data.event === "onError") {
+      state.youtubePlaying = false;
+      setPlaybackActive(false);
+      setStatus("YouTube player reported an error.", true);
     }
 
     if (state.currentMode === "vimeo") {
