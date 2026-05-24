@@ -21,6 +21,9 @@
     currentMode: null,
     video: null,
     iframe: null,
+    youtubePlaying: false,
+    youtubeCurrentTime: null,
+    lastSeekCommand: null,
     pendingPlay: false,
     overlayVisible: true,
     isPlaying: false,
@@ -156,10 +159,17 @@
 
     const youtubeId = getYoutubeId(url, host);
     if (youtubeId) {
+      const params = new URLSearchParams({
+        playsinline: "1",
+        autoplay: "1",
+        rel: "0",
+        enablejsapi: "1",
+        origin: window.location.origin,
+      });
       return {
         mode: "youtube",
         originalUrl,
-        playerUrl: `https://www.youtube.com/embed/${youtubeId}?playsinline=1&autoplay=1&rel=0&enablejsapi=1`,
+        playerUrl: `https://www.youtube.com/embed/${youtubeId}?${params.toString()}`,
         titleHint: `YouTube ${youtubeId}`,
         reason: "",
       };
@@ -170,7 +180,7 @@
       return {
         mode: "vimeo",
         originalUrl,
-        playerUrl: `https://player.vimeo.com/video/${vimeoMatch[1]}?autoplay=1&playsinline=1`,
+        playerUrl: `https://player.vimeo.com/video/${vimeoMatch[1]}?autoplay=1&playsinline=1&api=1`,
         titleHint: `Vimeo ${vimeoMatch[1]}`,
         reason: "",
       };
@@ -181,7 +191,7 @@
       return {
         mode: "dailymotion",
         originalUrl,
-        playerUrl: `https://www.dailymotion.com/embed/video/${dailyId}?autoplay=1`,
+        playerUrl: `https://www.dailymotion.com/embed/video/${dailyId}?autoplay=1&api=postMessage`,
         titleHint: `Dailymotion ${dailyId}`,
         reason: "",
       };
@@ -232,6 +242,9 @@
     state.video = null;
     state.iframe = null;
     state.currentMode = null;
+    state.youtubePlaying = false;
+    state.youtubeCurrentTime = null;
+    state.lastSeekCommand = null;
     state.pendingPlay = false;
     state.isPlaying = false;
     els.shell.classList.remove("has-video", "has-critical-status", "overlay-hidden");
@@ -285,12 +298,20 @@
     }
 
     const iframe = document.createElement("iframe");
+    iframe.id = `player-${media.mode}`;
     iframe.src = media.playerUrl;
     iframe.allow = "autoplay; fullscreen; picture-in-picture";
     iframe.allowFullscreen = true;
     iframe.title = media.titleHint || "Embedded video player";
+    iframe.addEventListener("load", () => {
+      if (media.mode === "youtube") {
+        state.iframe?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: iframe.id }), "*");
+        requestYoutubeTime();
+      }
+    });
     els.playerHost.replaceChildren(iframe);
     state.iframe = iframe;
+    state.youtubePlaying = media.mode === "youtube";
     setPlaybackActive(true);
 
     if (media.mode === "youtube") {
@@ -337,7 +358,7 @@
     if (state.currentMode === "youtube") {
       const func = command === "play" ? "playVideo" : command === "pause" ? "pauseVideo" : "";
       if (func) {
-        state.iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
+        postToYoutube(func);
       }
     } else if (state.currentMode === "vimeo") {
       const method = command === "play" || command === "pause" ? command : "";
@@ -349,6 +370,230 @@
       if (method) {
         state.iframe.contentWindow.postMessage({ command: method }, "*");
       }
+    }
+  }
+
+  function getActivePlayerMode() {
+    if (state.video && state.currentMode === "native-video") {
+      return "native-video";
+    }
+    if (state.iframe && ["youtube", "vimeo", "dailymotion"].includes(state.currentMode)) {
+      return state.currentMode;
+    }
+    return "none";
+  }
+
+  function setCommandStatus(command, result, isError) {
+    setStatus(`Command: ${command} ${result}`, isError);
+  }
+
+  function postToYoutube(func, args) {
+    if (!state.iframe?.contentWindow) {
+      return false;
+    }
+    state.iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func, args: args || [] }), "*");
+    return true;
+  }
+
+  function requestYoutubeTime() {
+    postToYoutube("getCurrentTime");
+  }
+
+  function sendYoutubeSeek(command) {
+    if (typeof state.youtubeCurrentTime !== "number" || Number.isNaN(state.youtubeCurrentTime)) {
+      requestYoutubeTime();
+      setCommandStatus(command, "sent. YouTube seek may be limited until playback starts");
+      return;
+    }
+
+    const offset = command === "seekBack" ? -SEEK_SECONDS : SEEK_SECONDS;
+    const nextTime = Math.max(0, state.youtubeCurrentTime + offset);
+    state.youtubeCurrentTime = nextTime;
+    postToYoutube("seekTo", [nextTime, true]);
+    setCommandStatus(command, "sent to YouTube");
+  }
+
+  function sendYoutubeCommand(command) {
+    if (command === "playPause") {
+      if (state.youtubePlaying) {
+        postToYoutube("pauseVideo");
+        state.youtubePlaying = false;
+        setPlaybackActive(false);
+      } else {
+        postToYoutube("playVideo");
+        state.youtubePlaying = true;
+        setPlaybackActive(true);
+      }
+      setStatus("Sent play/pause to YouTube. Command: playPause sent");
+      return;
+    }
+
+    if (command === "play") {
+      postToYoutube("playVideo");
+      state.youtubePlaying = true;
+      setPlaybackActive(true);
+      setStatus("Sent play to YouTube. Command: play sent");
+      return;
+    }
+
+    if (command === "pause") {
+      postToYoutube("pauseVideo");
+      state.youtubePlaying = false;
+      setPlaybackActive(false);
+      setStatus("Sent pause to YouTube. Command: pause sent");
+      return;
+    }
+
+    if (command === "stop") {
+      postToYoutube("stopVideo");
+      state.youtubePlaying = false;
+      setPlaybackActive(false);
+      setStatus("Sent stop to YouTube. Command: stop sent");
+      return;
+    }
+
+    if (command === "seekBack" || command === "seekForward") {
+      sendYoutubeSeek(command);
+      return;
+    }
+
+    if (command === "fullscreen") {
+      requestFullscreen(els.playerHost, command);
+    }
+  }
+
+  function postObjectToIframe(message) {
+    if (!state.iframe?.contentWindow) {
+      return false;
+    }
+    state.iframe.contentWindow.postMessage(JSON.stringify(message), "*");
+    return true;
+  }
+
+  function sendVimeoCommand(command) {
+    const methodMap = {
+      playPause: state.isPlaying ? "pause" : "play",
+      play: "play",
+      pause: "pause",
+      stop: "unload",
+      seekBack: "getCurrentTime",
+      seekForward: "getCurrentTime",
+    };
+    const method = methodMap[command];
+
+    if (command === "fullscreen") {
+      requestFullscreen(els.playerHost, command);
+      return;
+    }
+
+    if (command === "seekBack" || command === "seekForward") {
+      state.lastSeekCommand = command;
+      postObjectToIframe({ method });
+      setCommandStatus(command, "sent. Controls may be limited for this player");
+      return;
+    }
+
+    if (method) {
+      postObjectToIframe({ method });
+      if (command === "play" || (command === "playPause" && !state.isPlaying)) {
+        setPlaybackActive(true);
+      } else if (command === "pause" || command === "stop" || command === "playPause") {
+        setPlaybackActive(false);
+      }
+      setCommandStatus(command, "sent. Controls may be limited for this player");
+      return;
+    }
+
+    setCommandStatus(command, "not supported. Controls may be limited for this player");
+  }
+
+  function sendDailymotionCommand(command) {
+    const commandMap = {
+      playPause: state.isPlaying ? "pause" : "play",
+      play: "play",
+      pause: "pause",
+      stop: "pause",
+      seekBack: "seek",
+      seekForward: "seek",
+    };
+    const playerCommand = commandMap[command];
+
+    if (command === "fullscreen") {
+      requestFullscreen(els.playerHost, command);
+      return;
+    }
+
+    if (command === "seekBack" || command === "seekForward") {
+      setCommandStatus(command, "sent. Controls may be limited for this player");
+      postObjectToIframe({ command: playerCommand, parameters: [command === "seekBack" ? -SEEK_SECONDS : SEEK_SECONDS] });
+      return;
+    }
+
+    if (playerCommand) {
+      postObjectToIframe({ command: playerCommand });
+      if (command === "play" || (command === "playPause" && !state.isPlaying)) {
+        setPlaybackActive(true);
+      } else if (command === "pause" || command === "stop" || command === "playPause") {
+        setPlaybackActive(false);
+      }
+      setCommandStatus(command, "sent. Controls may be limited for this player");
+      return;
+    }
+
+    setCommandStatus(command, "not supported. Controls may be limited for this player");
+  }
+
+  async function handleNativeVideoCommand(command) {
+    const video = state.video;
+    if (!video) {
+      setCommandStatus(command, "ignored. No active video", true);
+      return;
+    }
+
+    if (command === "playPause") {
+      if (video.paused) {
+        await tryPlay();
+        setCommandStatus(command, "sent");
+      } else {
+        video.pause();
+        setCommandStatus(command, "sent");
+      }
+    } else if (command === "play") {
+      await tryPlay();
+      setCommandStatus(command, "sent");
+    } else if (command === "pause") {
+      video.pause();
+      setCommandStatus(command, "sent");
+    } else if (command === "seekBack") {
+      video.currentTime = Math.max(0, video.currentTime - SEEK_SECONDS);
+      setCommandStatus(command, "sent");
+    } else if (command === "seekForward") {
+      video.currentTime = Math.min(video.duration || Infinity, video.currentTime + SEEK_SECONDS);
+      setCommandStatus(command, "sent");
+    } else if (command === "stop") {
+      video.pause();
+      video.currentTime = 0;
+      setPlaybackActive(false);
+      setCommandStatus(command, "sent");
+    } else if (command === "fullscreen") {
+      requestFullscreen(els.playerHost, command);
+    }
+  }
+
+  async function handlePlaybackCommand(command) {
+    showOverlayTemporarily();
+
+    const mode = getActivePlayerMode();
+    if (mode === "native-video") {
+      await handleNativeVideoCommand(command);
+    } else if (mode === "youtube") {
+      sendYoutubeCommand(command);
+    } else if (mode === "vimeo") {
+      sendVimeoCommand(command);
+    } else if (mode === "dailymotion") {
+      sendDailymotionCommand(command);
+    } else {
+      setCommandStatus(command, "ignored. No active player", true);
     }
   }
 
@@ -364,64 +609,65 @@
       return;
     }
 
-    const command = payload.command;
-    if (state.video) {
-      if (command === "playPause") {
-        if (state.video.paused) {
-          await tryPlay();
-        } else {
-          state.video.pause();
-          setStatus("Paused.");
-        }
-      } else if (command === "play") {
-        await tryPlay();
-      } else if (command === "pause") {
-        state.video.pause();
-        setStatus("Paused.");
-      } else if (command === "seekBack") {
-        state.video.currentTime = Math.max(0, state.video.currentTime - SEEK_SECONDS);
-        setStatus("Skipped back 10 seconds.");
-      } else if (command === "seekForward") {
-        state.video.currentTime = Math.min(state.video.duration || Infinity, state.video.currentTime + SEEK_SECONDS);
-        setStatus("Skipped forward 10 seconds.");
-      } else if (command === "stop") {
-        state.video.pause();
-        state.video.currentTime = 0;
-        setPlaybackActive(false);
-        setStatus("Stopped.");
-      } else if (command === "fullscreen") {
-        requestFullscreen(state.video);
-      }
-      return;
-    }
+    await handlePlaybackCommand(payload.command);
+  }
 
-    if (state.iframe) {
-      if (command === "playPause") {
-        postToIframe("play");
-        setPlaybackActive(true);
-        setStatus("Play/Pause sent. Embedded controls may be limited.");
-      } else if (command === "play" || command === "pause") {
-        postToIframe(command);
-        setPlaybackActive(command === "play");
-        setStatus(`${command[0].toUpperCase()}${command.slice(1)} sent. Embedded controls may be limited.`);
-      } else if (command === "fullscreen") {
-        requestFullscreen(state.iframe);
-      } else if (command === "stop") {
-        clearPlayer();
-        renderEmpty("Ready to receive", "Cast a supported video link from your phone.");
-        setNowPlaying("Nothing yet");
-        setStatus("Stopped.");
-      } else {
-        setStatus("This embedded player does not support that remote command.");
-      }
+  function requestFullscreen(el, command) {
+    if (el && el.requestFullscreen) {
+      el
+        .requestFullscreen()
+        .then(() => setCommandStatus(command || "fullscreen", "sent"))
+        .catch(() => setStatus("Fullscreen is not available here.", true));
+    } else {
+      setStatus("Fullscreen is not available here.", true);
     }
   }
 
-  function requestFullscreen(el) {
-    if (el && el.requestFullscreen) {
-      el.requestFullscreen().catch(() => setStatus("Fullscreen request was blocked by the display.", true));
-    } else {
-      setStatus("Fullscreen is not available on this display.", true);
+  function parsePlayerMessage(data) {
+    if (typeof data === "string") {
+      try {
+        return JSON.parse(data);
+      } catch {
+        return null;
+      }
+    }
+    return data && typeof data === "object" ? data : null;
+  }
+
+  function handlePlayerMessage(event) {
+    if (!state.iframe || event.source !== state.iframe.contentWindow) {
+      return;
+    }
+
+    const data = parsePlayerMessage(event.data);
+    if (!data) {
+      return;
+    }
+
+    if (state.currentMode === "youtube" && data.event === "infoDelivery" && data.info) {
+      if (typeof data.info.currentTime === "number") {
+        state.youtubeCurrentTime = data.info.currentTime;
+      }
+      if (typeof data.info.playerState === "number") {
+        const wasPlaying = state.youtubePlaying;
+        state.youtubePlaying = data.info.playerState === 1;
+        if ([0, 1, 2].includes(data.info.playerState) && wasPlaying !== state.youtubePlaying) {
+          setPlaybackActive(data.info.playerState === 1);
+        }
+      }
+    }
+
+    if (state.currentMode === "vimeo") {
+      if (data.event === "play") {
+        setPlaybackActive(true);
+      } else if (data.event === "pause" || data.event === "ended") {
+        setPlaybackActive(false);
+      } else if (data.method === "getCurrentTime" && typeof data.value === "number") {
+        const nextTime =
+          state.lastSeekCommand === "seekBack" ? Math.max(0, data.value - SEEK_SECONDS) : data.value + SEEK_SECONDS;
+        postObjectToIframe({ method: "setCurrentTime", value: nextTime });
+        state.lastSeekCommand = null;
+      }
     }
   }
 
@@ -477,10 +723,12 @@
     els.tapToPlay.addEventListener("click", tryPlay);
     els.showCode.addEventListener("click", () => showCodeOverlay(true));
     document.addEventListener("keydown", handleKeys);
+    window.addEventListener("message", handlePlayerMessage);
     state.pollTimer = window.setInterval(pollSession, POLL_MS);
     pollSession();
   }
 
   window.resolveMediaUrl = resolveMediaUrl;
+  window.handlePlaybackCommand = handlePlaybackCommand;
   init();
 })();

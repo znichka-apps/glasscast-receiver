@@ -44,10 +44,17 @@
 
     const youtubeId = getYoutubeId(url, host);
     if (youtubeId) {
+      const params = new URLSearchParams({
+        playsinline: "1",
+        autoplay: "1",
+        rel: "0",
+        enablejsapi: "1",
+        origin: window.location.origin,
+      });
       return {
         mode: "youtube",
         originalUrl,
-        playerUrl: `https://www.youtube.com/embed/${youtubeId}?playsinline=1&autoplay=1&rel=0&enablejsapi=1`,
+        playerUrl: `https://www.youtube.com/embed/${youtubeId}?${params.toString()}`,
         titleHint: `YouTube ${youtubeId}`,
         reason: "",
       };
@@ -58,7 +65,7 @@
       return {
         mode: "vimeo",
         originalUrl,
-        playerUrl: `https://player.vimeo.com/video/${vimeoMatch[1]}?autoplay=1&playsinline=1`,
+        playerUrl: `https://player.vimeo.com/video/${vimeoMatch[1]}?autoplay=1&playsinline=1&api=1`,
         titleHint: `Vimeo ${vimeoMatch[1]}`,
         reason: "",
       };
@@ -69,7 +76,7 @@
       return {
         mode: "dailymotion",
         originalUrl,
-        playerUrl: `https://www.dailymotion.com/embed/video/${dailyId}?autoplay=1`,
+        playerUrl: `https://www.dailymotion.com/embed/video/${dailyId}?autoplay=1&api=postMessage`,
         titleHint: `Dailymotion ${dailyId}`,
         reason: "",
       };
