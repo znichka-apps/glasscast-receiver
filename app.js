@@ -4,6 +4,7 @@
   const COMMAND_MAX_AGE_MS = 10000;
   const RECENT_COMMAND_LIMIT = 25;
   const PROCESSED_COMMANDS_KEY = "glasscast.processedCommandIds.v1";
+  const LOCAL_MUTED_AUTOPLAY_FALLBACK = true;
   const UNSUPPORTED_MESSAGE =
     "This does not look like a playable video link. Paste a direct video URL or supported video page link.";
   const LOCAL_VIDEO_UNREACHABLE_MESSAGE =
@@ -140,12 +141,18 @@
     );
   }
 
+  function refreshFocusableElements() {
+    const focusables = getFocusables();
+    state.activeFocusIndex = focusables.indexOf(document.activeElement);
+    return focusables;
+  }
+
   function focusElement(el) {
     if (!el) {
       return;
     }
 
-    const focusables = getFocusables();
+    const focusables = refreshFocusableElements();
     state.activeFocusIndex = focusables.indexOf(el);
     el.focus();
   }
@@ -159,7 +166,7 @@
   }
 
   function isActivationKey(key) {
-    return key === "Enter" || key === " " || key === "Spacebar";
+    return key === "Enter" || key === " " || key === "Spacebar" || key === "Space";
   }
 
   function isAutoplayBlockedPlayKey(key) {
@@ -558,8 +565,12 @@
     els.tapToPlayOverlay.classList.remove("hidden");
     els.tapToPlayStatus.textContent = message || "";
     els.tapToPlayStatus.classList.toggle("hidden", !message);
+    if (state.nativeVideoIsLocal && state.video) {
+      state.video.controls = true;
+    }
     setStatus(message || "Select this on your glasses to start the local video.", isError);
     showOverlay();
+    refreshFocusableElements();
     focusTapToPlay();
     console.info("[GlassCast] Tap to Play focused");
     window.requestAnimationFrame(() => {
@@ -571,8 +582,19 @@
     els.tapToPlayOverlay.classList.add("hidden");
     els.tapToPlayStatus.classList.add("hidden");
     els.tapToPlayStatus.textContent = "";
+    if (state.nativeVideoIsLocal && state.video) {
+      state.video.controls = false;
+    }
     state.pendingPlay = false;
     state.autoplayBlocked = false;
+  }
+
+  function logPlayFailure(source, error) {
+    console.info("[GlassCast] play failure", {
+      source,
+      name: error?.name || "",
+      message: error?.message || "",
+    });
   }
 
   async function castVideo(url) {
@@ -605,8 +627,12 @@
       video.src = media.playerUrl;
       video.controls = false;
       video.playsInline = true;
+      video.setAttribute("playsinline", "");
       video.autoplay = true;
       video.preload = "auto";
+      if (media.isLocalNetworkVideo) {
+        console.info("[GlassCast] local video URL loaded", { url: media.playerUrl });
+      }
       video.addEventListener("play", () => {
         hideTapToPlay();
         state.nativePlaybackStarted = true;
@@ -618,7 +644,18 @@
         setPlaybackActive(false);
         publishPlaybackState(true);
       });
-      video.addEventListener("loadedmetadata", () => publishPlaybackState(true));
+      video.addEventListener("loadedmetadata", () => {
+        console.info("[GlassCast] loadedmetadata", {
+          local: media.isLocalNetworkVideo,
+          duration: video.duration,
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+        });
+        publishPlaybackState(true);
+      });
+      video.addEventListener("canplay", () => {
+        console.info("[GlassCast] canplay", { local: media.isLocalNetworkVideo });
+      });
       video.addEventListener("seeked", () => publishPlaybackState(true));
       video.addEventListener("timeupdate", () => publishPlaybackState(false));
       video.addEventListener("ended", () => {
@@ -627,6 +664,12 @@
         publishPlaybackState(true);
       });
       video.addEventListener("error", () => {
+        console.info("[GlassCast] video error", {
+          local: media.isLocalNetworkVideo,
+          url: media.playerUrl,
+          code: video.error?.code || 0,
+          message: video.error?.message || "",
+        });
         if (media.isLocalNetworkVideo) {
           console.info("Local video playback error", { url: media.playerUrl, error: video.error });
         }
@@ -715,11 +758,10 @@
       console.info("[GlassCast] play success", { source: "autoplay" });
       return true;
     } catch (error) {
-      console.info("[GlassCast] autoplay blocked", { error });
-      console.info("[GlassCast] play failure", { source: "autoplay", error });
+      logPlayFailure("autoplay", error);
     }
 
-    if (state.nativeVideoIsLocal) {
+    if (LOCAL_MUTED_AUTOPLAY_FALLBACK && state.nativeVideoIsLocal) {
       const previousMuted = state.video.muted;
       console.info("[GlassCast] muted autoplay attempted");
       try {
@@ -734,7 +776,7 @@
         return true;
       } catch (error) {
         state.video.muted = previousMuted;
-        console.info("[GlassCast] play failure", { source: "muted-autoplay", error });
+        logPlayFailure("muted-autoplay", error);
       }
     }
 
@@ -750,6 +792,9 @@
       }
       eventOrSource.preventDefault();
       eventOrSource.stopPropagation();
+    } else if (eventOrSource && typeof eventOrSource === "object") {
+      eventOrSource.preventDefault?.();
+      eventOrSource.stopPropagation?.();
     }
 
     if (!state.video) {
@@ -778,7 +823,26 @@
       console.info("[GlassCast] play success", { source });
       return true;
     } catch (error) {
-      console.info("[GlassCast] play failure", { source, error });
+      logPlayFailure(source, error);
+      if (LOCAL_MUTED_AUTOPLAY_FALLBACK && state.nativeVideoIsLocal) {
+        const previousMuted = state.video.muted;
+        try {
+          state.video.muted = true;
+          console.info("[GlassCast] native video play attempt", { source: `${source}:muted-fallback`, muted: true });
+          await state.video.play();
+          hideTapToPlay();
+          state.nativePlaybackStarted = true;
+          setPlaybackActive(true);
+          setStatus("Started muted.");
+          publishPlaybackState(true);
+          scheduleOverlayHide();
+          console.info("[GlassCast] play success", { source: `${source}:muted-fallback` });
+          return true;
+        } catch (mutedError) {
+          state.video.muted = previousMuted;
+          logPlayFailure(`${source}:muted-fallback`, mutedError);
+        }
+      }
       showTapToPlay("Select Tap to Play on the glasses.", true);
       publishPlaybackState(true);
       return false;
@@ -1275,6 +1339,7 @@
     if (state.autoplayBlocked) {
       if (isAutoplayBlockedPlayKey(event.key)) {
         event.preventDefault();
+        event.stopPropagation();
         focusTapToPlay();
         await attemptUserGesturePlay(`global-keydown:${event.key}`);
         return;
@@ -1305,9 +1370,22 @@
   function init() {
     els.code.textContent = state.code;
     els.tapToPlayButton.addEventListener("click", attemptUserGesturePlay);
+    els.tapToPlayButton.addEventListener("pointerdown", attemptUserGesturePlay);
+    els.tapToPlayButton.addEventListener("touchstart", attemptUserGesturePlay);
     els.tapToPlayButton.addEventListener("keydown", attemptUserGesturePlay);
     els.showCode.addEventListener("click", () => showCodeOverlay(true));
     document.addEventListener("keydown", handleKeys);
+    window.addEventListener("keydown", handleKeys);
+    ["click", "pointerdown", "touchstart"].forEach((eventName) => {
+      document.addEventListener(eventName, (event) => {
+        if (!state.autoplayBlocked) {
+          return;
+        }
+
+        event.preventDefault();
+        attemptUserGesturePlay(`global-${eventName}`);
+      });
+    });
     window.addEventListener("message", handlePlayerMessage);
     state.pollTimer = window.setInterval(pollSession, POLL_MS);
     pollSession();
