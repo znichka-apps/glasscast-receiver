@@ -4,7 +4,7 @@ GlassCast Receiver is a tiny Cast-like video receiver for Meta Ray-Ban Display g
 
 The glasses display opens `index.html`, generates a short session code, and polls a simple Vercel API route every 700ms. A phone opens `/phone`, enters that code, and sends video URLs or playback commands.
 
-The receiver also publishes playback state about once per second while media is loaded so a controller can show a scrubber.
+The receiver also publishes playback state about once per second while media is loaded so a controller can show a scrubber when the active player supports timeline controls.
 
 ## Local Testing
 
@@ -62,7 +62,7 @@ GlassCast accepts:
 - Dailymotion URLs in the form `dailymotion.com/video/VIDEO_ID` or `dai.ly/VIDEO_ID`
 - Direct public video URLs
 
-YouTube links are converted to an embed URL with `enablejsapi=1`. Vimeo and Dailymotion links are converted to their player embeds.
+YouTube links are converted to an embed URL with `enablejsapi=1`. Vimeo and Dailymotion links are converted to their player embeds. Dailymotion playback is supported, but timeline controls are limited and reported as unavailable in playback state.
 
 ## Session API
 
@@ -90,6 +90,9 @@ The receiver publishes playback state with:
     "duration": 999,
     "playing": true,
     "mode": "youtube",
+    "canSeek": true,
+    "timelineAvailable": true,
+    "controlsLimited": false,
     "title": "YouTube video",
     "url": "https://..."
   }
@@ -112,6 +115,9 @@ Response:
     "duration": 999,
     "playing": true,
     "mode": "youtube",
+    "canSeek": true,
+    "timelineAvailable": true,
+    "controlsLimited": false,
     "title": "YouTube video",
     "url": "https://..."
   }
@@ -126,4 +132,4 @@ Unsupported links include bare `youtube.com`, YouTube search pages, generic webs
 
 The API uses in-memory serverless state. That keeps the MVP simple, but it is not durable and may reset when a serverless instance restarts or when Vercel routes requests to a different instance. A future production version should use durable shared storage such as Vercel KV.
 
-Embedded player commands are best-effort. Direct public video URLs support play/pause/seek/stop/fullscreen directly. YouTube, Vimeo, and Dailymotion may require tapping play on the display or using their embedded controls depending on browser and embed restrictions.
+Embedded player commands are best-effort. Direct public video URLs support play/pause/seek/stop/fullscreen directly. YouTube and Vimeo may require tapping play on the display or using their embedded controls depending on browser and embed restrictions. Dailymotion playback is supported, but timeline/scrubbing controls are limited; `seekTo`, `seekBack`, and `seekForward` are acknowledged without seeking and playback state reports `canSeek: false`, `timelineAvailable: false`, and `controlsLimited: true`.

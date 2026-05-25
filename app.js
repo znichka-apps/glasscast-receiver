@@ -254,10 +254,14 @@
         mode: "native-video",
         title: state.mediaTitle,
         url: state.mediaUrl,
+        canSeek: true,
+        timelineAvailable: true,
+        controlsLimited: false,
       };
     }
 
     if (state.iframe && state.currentMode === "youtube") {
+      const hasTimeline = !youtubeTimelineUnavailable();
       return {
         currentTime: finiteSeconds(state.youtubeCurrentTime),
         duration: isPlayableDuration(state.youtubeDuration) ? state.youtubeDuration : 0,
@@ -265,10 +269,13 @@
         mode: "youtube",
         title: state.mediaTitle,
         url: state.mediaUrl,
+        canSeek: hasTimeline,
+        timelineAvailable: hasTimeline,
+        controlsLimited: false,
       };
     }
 
-    if (state.iframe && ["vimeo", "dailymotion"].includes(state.currentMode)) {
+    if (state.iframe && state.currentMode === "vimeo") {
       return {
         currentTime: 0,
         duration: 0,
@@ -276,6 +283,23 @@
         mode: state.currentMode,
         title: state.mediaTitle,
         url: state.mediaUrl,
+        canSeek: true,
+        timelineAvailable: true,
+        controlsLimited: true,
+      };
+    }
+
+    if (state.iframe && state.currentMode === "dailymotion") {
+      return {
+        currentTime: 0,
+        duration: 0,
+        playing: state.isPlaying,
+        mode: "dailymotion",
+        title: state.mediaTitle,
+        url: state.mediaUrl,
+        canSeek: false,
+        timelineAvailable: false,
+        controlsLimited: true,
       };
     }
 
@@ -286,6 +310,9 @@
       mode: state.currentMode === "unsupported" ? "unsupported" : "idle",
       title: state.mediaTitle,
       url: state.mediaUrl,
+      canSeek: false,
+      timelineAvailable: false,
+      controlsLimited: false,
     };
   }
 
@@ -1149,8 +1176,6 @@
       play: "play",
       pause: "pause",
       stop: "pause",
-      seekBack: "seek",
-      seekForward: "seek",
     };
     const playerCommand = commandMap[command];
 
@@ -1160,14 +1185,13 @@
     }
 
     if (command === "seekBack" || command === "seekForward") {
-      setCommandStatus(command, "sent. Controls may be limited for this player");
-      postObjectToIframe({ command: playerCommand, parameters: [command === "seekBack" ? -SEEK_SECONDS : SEEK_SECONDS] });
+      setStatus("Timeline unavailable for this player.");
+      publishPlaybackState(true);
       return;
     }
 
     if (command === "seekTo") {
-      postObjectToIframe({ command: "seek", parameters: [finiteSeconds(time)] });
-      setCommandStatus(command, "sent. Controls may be limited for this player");
+      setStatus("Timeline unavailable for this player.");
       publishPlaybackState(true);
       return;
     }

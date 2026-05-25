@@ -65,6 +65,12 @@ function cleanState(value) {
     mode,
   };
 
+  for (const field of ["canSeek", "timelineAvailable", "controlsLimited"]) {
+    if (typeof input[field] === "boolean") {
+      state[field] = input[field];
+    }
+  }
+
   if (title) {
     state.title = title.slice(0, 300);
   }
