@@ -380,13 +380,17 @@
     );
   }
 
+  function isLocalHostname(hostname) {
+    const normalized = hostname.toLowerCase();
+    return normalized === "localhost" || normalized === "127.0.0.1";
+  }
+
   function isLocalNetworkVideoUrl(url) {
     return (
       url.protocol === "http:" &&
-      isPrivateIpv4(url.hostname) &&
+      (isPrivateIpv4(url.hostname) || isLocalHostname(url.hostname)) &&
       Boolean(url.port) &&
-      url.pathname === "/video" &&
-      url.searchParams.has("token")
+      url.pathname.startsWith("/video")
     );
   }
 
@@ -414,6 +418,9 @@
     const localNetworkVideo = isLocalNetworkVideoUrl(url);
 
     if (directVideoPattern.test(url.href) || localNetworkVideo) {
+      if (localNetworkVideo) {
+        console.info("Resolved local video server URL", { url: originalUrl });
+      }
       return {
         mode: "native-video",
         originalUrl,
@@ -620,6 +627,9 @@
         publishPlaybackState(true);
       });
       video.addEventListener("error", () => {
+        if (media.isLocalNetworkVideo) {
+          console.info("Local video playback error", { url: media.playerUrl, error: video.error });
+        }
         setPlaybackActive(false);
         setStatus(
           media.isLocalNetworkVideo

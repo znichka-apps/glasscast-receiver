@@ -42,13 +42,17 @@
     );
   }
 
+  function isLocalHostname(hostname) {
+    const normalized = hostname.toLowerCase();
+    return normalized === "localhost" || normalized === "127.0.0.1";
+  }
+
   function isLocalNetworkVideoUrl(url) {
     return (
       url.protocol === "http:" &&
-      isPrivateIpv4(url.hostname) &&
+      (isPrivateIpv4(url.hostname) || isLocalHostname(url.hostname)) &&
       Boolean(url.port) &&
-      url.pathname === "/video" &&
-      url.searchParams.has("token")
+      url.pathname.startsWith("/video")
     );
   }
 
@@ -72,8 +76,20 @@
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     const path = url.pathname;
 
-    if (/\.(mp4|webm|ogg|mov)(?:$|[?#])/i.test(url.href) || isLocalNetworkVideoUrl(url)) {
-      return { mode: "native-video", originalUrl, playerUrl: originalUrl, titleHint: originalUrl, reason: "" };
+    const localNetworkVideo = isLocalNetworkVideoUrl(url);
+
+    if (/\.(mp4|webm|ogg|mov)(?:$|[?#])/i.test(url.href) || localNetworkVideo) {
+      if (localNetworkVideo) {
+        console.info("Resolved local video server URL", { url: originalUrl });
+      }
+      return {
+        mode: "native-video",
+        originalUrl,
+        playerUrl: originalUrl,
+        titleHint: localNetworkVideo ? "Local video" : originalUrl,
+        isLocalNetworkVideo: localNetworkVideo,
+        reason: "",
+      };
     }
 
     const youtube = getYoutubeVideo(url, host);
