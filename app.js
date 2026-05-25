@@ -16,7 +16,9 @@
     codeOverlay: document.getElementById("codeOverlay"),
     showCode: document.getElementById("showCodeButton"),
     playerHost: document.getElementById("playerHost"),
-    tapToPlay: document.getElementById("tapToPlay"),
+    tapToPlayOverlay: document.getElementById("tapToPlayOverlay"),
+    tapToPlayButton: document.getElementById("tapToPlayButton"),
+    tapToPlayStatus: document.getElementById("tapToPlayStatus"),
     nowPlaying: document.getElementById("nowPlaying"),
     status: document.getElementById("statusText"),
   };
@@ -37,6 +39,9 @@
     mediaTitle: "",
     mediaUrl: "",
     pendingPlay: false,
+    autoplayBlocked: false,
+    nativeVideoIsLocal: false,
+    nativePlaybackStarted: false,
     overlayVisible: true,
     isPlaying: false,
     overlayHideTimer: null,
@@ -85,7 +90,7 @@
   }
 
   function shouldKeepOverlayVisible() {
-    return state.pendingPlay || els.status.classList.contains("error") || !state.isPlaying;
+    return state.autoplayBlocked || state.pendingPlay || els.status.classList.contains("error") || !state.isPlaying;
   }
 
   function showOverlay() {
@@ -118,7 +123,7 @@
   }
 
   function showOverlayTemporarily() {
-    if (state.pendingPlay) {
+    if (state.autoplayBlocked || state.pendingPlay) {
       showOverlay();
       return;
     }
@@ -482,7 +487,7 @@
     console.info("[GlassCast] player clear/load reset called", { mode: state.currentMode, url: state.mediaUrl });
     clearOverlayHideTimer();
     clearStatePublishTimer();
-    els.tapToPlay.classList.add("hidden");
+    els.tapToPlayOverlay.classList.add("hidden");
     els.playerHost.replaceChildren();
     state.video = null;
     state.iframe = null;
@@ -495,6 +500,9 @@
     state.mediaTitle = "";
     state.mediaUrl = "";
     state.pendingPlay = false;
+    state.autoplayBlocked = false;
+    state.nativeVideoIsLocal = false;
+    state.nativePlaybackStarted = false;
     state.isPlaying = false;
     els.shell.classList.remove("has-video", "has-critical-status");
     els.overlay.classList.remove("overlay-hidden");
@@ -502,18 +510,28 @@
     publishPlaybackState(true);
   }
 
-  function showTapToPlay(message) {
+  function showTapToPlay(message, isError) {
     state.pendingPlay = true;
+    state.autoplayBlocked = true;
     setPlaybackActive(false);
-    els.tapToPlay.classList.remove("hidden");
-    els.tapToPlay.focus();
-    setStatus(message || "Playback needs to be started on the glasses.");
+    els.tapToPlayOverlay.classList.remove("hidden");
+    els.tapToPlayStatus.textContent = message || "";
+    els.tapToPlayStatus.classList.toggle("hidden", !message);
+    setStatus(message || "Select this on your glasses to start the local video.", isError);
     showOverlay();
+    els.tapToPlayButton.focus();
+    console.info("[GlassCast] Tap to Play focused");
+    window.requestAnimationFrame(() => {
+      els.tapToPlayButton.focus();
+    });
   }
 
   function hideTapToPlay() {
-    els.tapToPlay.classList.add("hidden");
+    els.tapToPlayOverlay.classList.add("hidden");
+    els.tapToPlayStatus.classList.add("hidden");
+    els.tapToPlayStatus.textContent = "";
     state.pendingPlay = false;
+    state.autoplayBlocked = false;
   }
 
   async function castVideo(url) {
@@ -550,6 +568,7 @@
       video.preload = "auto";
       video.addEventListener("play", () => {
         hideTapToPlay();
+        state.nativePlaybackStarted = true;
         setPlaybackActive(true);
         setStatus("Playing.");
         publishPlaybackState(true);
@@ -578,6 +597,7 @@
       });
       els.playerHost.replaceChildren(video);
       state.video = video;
+      state.nativeVideoIsLocal = Boolean(media.isLocalNetworkVideo);
       els.shell.classList.add("has-video");
       startStatePublishing();
       await tryAutoplay();
@@ -636,35 +656,86 @@
       return false;
     }
 
+    console.info("[GlassCast] native video play attempt", {
+      source: "autoplay",
+      muted: state.video.muted,
+      local: state.nativeVideoIsLocal,
+    });
     try {
       await state.video.play();
       hideTapToPlay();
+      state.nativePlaybackStarted = true;
       setPlaybackActive(true);
       setStatus("Playing.");
       publishPlaybackState(true);
+      console.info("[GlassCast] play success", { source: "autoplay" });
       return true;
-    } catch {
-      showTapToPlay("Playback needs to be started on the glasses.");
-      publishPlaybackState(true);
-      return false;
+    } catch (error) {
+      console.info("[GlassCast] autoplay blocked", { error });
+      console.info("[GlassCast] play failure", { source: "autoplay", error });
     }
+
+    if (state.nativeVideoIsLocal) {
+      const previousMuted = state.video.muted;
+      console.info("[GlassCast] muted autoplay attempted");
+      try {
+        state.video.muted = true;
+        await state.video.play();
+        hideTapToPlay();
+        state.nativePlaybackStarted = true;
+        setPlaybackActive(true);
+        setStatus("Started muted. Use your phone volume or glasses controls if audio is unavailable.");
+        publishPlaybackState(true);
+        console.info("[GlassCast] play success", { source: "muted-autoplay" });
+        return true;
+      } catch (error) {
+        state.video.muted = previousMuted;
+        console.info("[GlassCast] play failure", { source: "muted-autoplay", error });
+      }
+    }
+
+    showTapToPlay("Playback still needs a glasses-side select gesture.", true);
+    publishPlaybackState(true);
+    return false;
   }
 
-  async function playFromTapToPlay() {
+  async function attemptUserGesturePlay(eventOrSource) {
+    if (eventOrSource && typeof eventOrSource === "object" && eventOrSource.type === "keydown") {
+      if (eventOrSource.key !== "Enter" && eventOrSource.key !== " ") {
+        return false;
+      }
+      eventOrSource.preventDefault();
+      eventOrSource.stopPropagation();
+    }
+
     if (!state.video) {
       return false;
     }
 
+    const source =
+      typeof eventOrSource === "string"
+        ? eventOrSource
+        : eventOrSource?.type
+          ? `tap-button-${eventOrSource.type}:${eventOrSource.key || "click"}`
+          : "user-gesture";
+    console.info("[GlassCast] Tap to Play activated", { source });
+    console.info("[GlassCast] native video play attempt", { source, muted: state.video.muted });
     try {
+      if (!state.nativePlaybackStarted) {
+        state.video.muted = false;
+      }
       await state.video.play();
       hideTapToPlay();
+      state.nativePlaybackStarted = true;
       setPlaybackActive(true);
       setStatus("Playing.");
       publishPlaybackState(true);
       scheduleOverlayHide();
+      console.info("[GlassCast] play success", { source });
       return true;
-    } catch {
-      showTapToPlay("Playback needs to be started on the glasses.");
+    } catch (error) {
+      console.info("[GlassCast] play failure", { source, error });
+      showTapToPlay("Playback still needs a glasses-side select gesture.", true);
       publishPlaybackState(true);
       return false;
     }
@@ -917,23 +988,25 @@
       return;
     }
 
+    if (
+      state.autoplayBlocked &&
+      !state.nativePlaybackStarted &&
+      (command === "play" || command === "playPause")
+    ) {
+      showTapToPlay("Select Tap to Play on the glasses to start this video.");
+      publishPlaybackState(true);
+      return;
+    }
+
     if (command === "playPause") {
       if (video.paused) {
-        if (state.pendingPlay) {
-          showTapToPlay("Use Tap to Play on the glasses to start this video.");
-        } else {
-          await tryAutoplay();
-        }
+        await tryAutoplay();
       } else {
         video.pause();
         setCommandStatus(command, "sent");
       }
     } else if (command === "play") {
-      if (state.pendingPlay) {
-        showTapToPlay("Use Tap to Play on the glasses to start this video.");
-      } else {
-        await tryAutoplay();
-      }
+      await tryAutoplay();
     } else if (command === "pause") {
       video.pause();
       setCommandStatus(command, "sent");
@@ -1154,7 +1227,15 @@
     focusables[nextIndex].focus();
   }
 
-  function handleKeys(event) {
+  async function handleKeys(event) {
+    if (state.autoplayBlocked) {
+      await attemptUserGesturePlay(`global-keydown:${event.key}`);
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        return;
+      }
+    }
+
     showOverlayTemporarily();
 
     if (["ArrowUp", "ArrowLeft"].includes(event.key)) {
@@ -1163,7 +1244,10 @@
     } else if (["ArrowDown", "ArrowRight"].includes(event.key)) {
       event.preventDefault();
       moveFocus("next");
-    } else if (event.key === "Enter" && document.activeElement?.classList.contains("focusable")) {
+    } else if (
+      (event.key === "Enter" || event.key === " ") &&
+      document.activeElement?.classList.contains("focusable")
+    ) {
       event.preventDefault();
       document.activeElement.click();
     } else if (event.key === "Escape") {
@@ -1175,7 +1259,8 @@
 
   function init() {
     els.code.textContent = state.code;
-    els.tapToPlay.addEventListener("click", playFromTapToPlay);
+    els.tapToPlayButton.addEventListener("click", attemptUserGesturePlay);
+    els.tapToPlayButton.addEventListener("keydown", attemptUserGesturePlay);
     els.showCode.addEventListener("click", () => showCodeOverlay(true));
     document.addEventListener("keydown", handleKeys);
     window.addEventListener("message", handlePlayerMessage);

@@ -261,19 +261,61 @@ textarea:focus {
   font-weight: 700;
 }
 
-.tap-play {
+.tap-play-overlay {
   position: absolute;
-  z-index: 8;
-  top: 50%;
-  left: 50%;
-  width: 360px;
-  min-height: 104px;
-  transform: translate(-50%, -50%);
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 18px;
+  place-items: center;
+  align-content: center;
+  padding: 42px;
+  background: rgba(0, 0, 0, 0.72);
+  pointer-events: auto;
+}
+
+.tap-play-button {
+  display: grid;
+  place-items: center;
+  width: min(100%, 480px);
+  min-height: 220px;
+  padding: 28px 30px;
   border-color: var(--accent);
   background: #123031;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.58);
-  font-size: 32px;
+  text-align: center;
+}
+
+.tap-play-button:focus,
+.tap-play-button:focus-visible {
+  outline: 5px solid var(--accent-strong);
+  outline-offset: 6px;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 10px rgba(34, 211, 238, 0.24), 0 18px 60px rgba(0, 0, 0, 0.58);
+}
+
+.tap-play-title {
+  font-size: 54px;
   font-weight: 800;
+  line-height: 1;
+}
+
+.tap-play-help {
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.tap-play-status {
+  max-width: 480px;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
 }
 
 .hidden {
