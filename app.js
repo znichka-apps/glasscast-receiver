@@ -1,6 +1,9 @@
 (function () {
   const POLL_MS = 700;
   const SEEK_SECONDS = 10;
+  const COMMAND_MAX_AGE_MS = 10000;
+  const RECENT_COMMAND_LIMIT = 25;
+  const PROCESSED_COMMANDS_KEY = "glasscast.processedCommandIds.v1";
   const UNSUPPORTED_MESSAGE =
     "This does not look like a playable video link. Paste a direct video URL or supported video page link.";
 
@@ -18,7 +21,9 @@
 
   const state = {
     code: createSessionCode(),
-    lastCommandId: null,
+    processedCommandIds: loadProcessedCommandIds(),
+    processedCommandSet: null,
+    processingCommandSet: new Set(),
     currentMode: null,
     video: null,
     iframe: null,
@@ -39,6 +44,7 @@
     statePublishInFlight: false,
     pollTimer: null,
   };
+  state.processedCommandSet = new Set(state.processedCommandIds);
 
   function createSessionCode() {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -131,6 +137,58 @@
 
   function isPlayableDuration(value) {
     return Number.isFinite(value) && value > 0;
+  }
+
+  function loadProcessedCommandIds() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(PROCESSED_COMMANDS_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string").slice(-RECENT_COMMAND_LIMIT) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function persistProcessedCommandIds() {
+    try {
+      localStorage.setItem(PROCESSED_COMMANDS_KEY, JSON.stringify(state.processedCommandIds));
+    } catch {
+      // localStorage can be unavailable in private or restricted browser modes.
+    }
+  }
+
+  function hasProcessedCommand(commandId) {
+    return state.processedCommandSet.has(commandId);
+  }
+
+  function markCommandProcessed(commandId) {
+    if (!commandId || state.processedCommandSet.has(commandId)) {
+      return;
+    }
+    state.processedCommandIds.push(commandId);
+    while (state.processedCommandIds.length > RECENT_COMMAND_LIMIT) {
+      const removed = state.processedCommandIds.shift();
+      state.processedCommandSet.delete(removed);
+    }
+    state.processedCommandSet.add(commandId);
+    persistProcessedCommandIds();
+  }
+
+  function isStaleCommand(payload) {
+    const createdAtMs = Date.parse(payload.createdAt);
+    return !Number.isFinite(createdAtMs) || Date.now() - createdAtMs > COMMAND_MAX_AGE_MS;
+  }
+
+  async function acknowledgeCommand(commandId) {
+    try {
+      await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: state.code, type: "ack", commandId }),
+      });
+      console.info("[GlassCast] command acknowledged", { commandId });
+    } catch (error) {
+      console.warn("[GlassCast] command acknowledgement failed", { commandId, error });
+    }
   }
 
   function getPlaybackState() {
@@ -254,6 +312,7 @@
 
   function resolveMediaUrl(input) {
     const originalUrl = String(input || "").trim();
+    console.info("[GlassCast] resolveMediaUrl called", { url: originalUrl });
     const base = {
       mode: "unsupported",
       originalUrl,
@@ -377,6 +436,7 @@
   }
 
   function clearPlayer() {
+    console.info("[GlassCast] player clear/load reset called", { mode: state.currentMode, url: state.mediaUrl });
     clearOverlayHideTimer();
     clearStatePublishTimer();
     els.tapToPlay.classList.add("hidden");
@@ -400,7 +460,9 @@
   }
 
   async function castVideo(url) {
+    console.info("[GlassCast] player render/load called", { url });
     const media = resolveMediaUrl(url);
+    console.info("[GlassCast] new cast received", { url, mode: media.mode, playerUrl: media.playerUrl });
     clearPlayer();
 
     if (media.mode === "unsupported") {
@@ -422,6 +484,7 @@
     showOverlay();
 
     if (media.mode === "native-video") {
+      console.info("[GlassCast] native video element created", { url: media.playerUrl });
       const video = document.createElement("video");
       video.src = media.playerUrl;
       video.controls = false;
@@ -460,6 +523,7 @@
     }
 
     const iframe = document.createElement("iframe");
+    console.info("[GlassCast] iframe created", { mode: media.mode, src: media.playerUrl });
     iframe.id = `player-${media.mode}`;
     iframe.src = media.playerUrl;
     iframe.allow =
@@ -469,6 +533,7 @@
     iframe.allowFullscreen = true;
     iframe.title = media.titleHint || "Embedded video player";
     iframe.addEventListener("load", () => {
+      console.info("[GlassCast] iframe load event", { mode: media.mode, src: iframe.src });
       if (media.mode === "youtube") {
         state.iframe?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: iframe.id }), "*");
         requestPlayerState();
@@ -488,6 +553,8 @@
 
     if (media.mode === "youtube") {
       setStatus("YouTube controls may require tapping play on the display.");
+    } else if (media.mode === "dailymotion") {
+      setStatus("Dailymotion controls and timeline are best-effort. If playback restarts, use the embedded controls.");
     } else {
       setStatus("Embedded player controls are best-effort for this source.");
     }
@@ -823,18 +890,49 @@
   }
 
   async function executeCommand(payload) {
-    if (!payload || payload.commandId === state.lastCommandId) {
+    if (!payload) {
       return;
     }
-    state.lastCommandId = payload.commandId;
+
+    const commandId = typeof payload.commandId === "string" ? payload.commandId.trim() : "";
+    const commandType = payload.type === "command" ? payload.command : payload.type;
+    console.info("[GlassCast] command received", { commandId, type: commandType, createdAt: payload.createdAt });
+
+    if (!commandId) {
+      console.warn("[GlassCast] command ignored because commandId is missing", { type: commandType });
+      return;
+    }
+
+    if (hasProcessedCommand(commandId) || state.processingCommandSet.has(commandId)) {
+      console.info("[GlassCast] duplicate command ignored", { commandId, type: commandType });
+      await acknowledgeCommand(commandId);
+      return;
+    }
+
+    if (isStaleCommand(payload)) {
+      console.warn("[GlassCast] stale command ignored", { commandId, type: commandType, createdAt: payload.createdAt });
+      markCommandProcessed(commandId);
+      await acknowledgeCommand(commandId);
+      return;
+    }
+
+    state.processingCommandSet.add(commandId);
     showOverlayTemporarily();
 
-    if (payload.type === "cast") {
-      await castVideo(payload.url);
-      return;
+    try {
+      if (payload.type === "cast") {
+        await castVideo(payload.url);
+      } else if (payload.type === "command") {
+        await handlePlaybackCommand(payload.command, payload.time);
+      } else {
+        console.warn("[GlassCast] command ignored because type is unsupported", { commandId, type: payload.type });
+      }
+      console.info("[GlassCast] command executed", { commandId, type: commandType });
+    } finally {
+      state.processingCommandSet.delete(commandId);
+      markCommandProcessed(commandId);
+      await acknowledgeCommand(commandId);
     }
-
-    await handlePlaybackCommand(payload.command, payload.time);
   }
 
   function requestFullscreen(el, command) {

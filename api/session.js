@@ -44,6 +44,10 @@ function commandId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function commandPayload(fields) {
+  return { commandId: commandId(), createdAt: new Date().toISOString(), ...fields };
+}
+
 function seconds(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 0;
@@ -91,6 +95,11 @@ module.exports = async function handler(req, res) {
       return;
     }
 
+    if (!latest.command) {
+      json(res, 200, { ok: true, empty: true });
+      return;
+    }
+
     json(res, 200, { ok: true, ...(latest.command || {}), state: latest.state || null });
     return;
   }
@@ -116,10 +125,10 @@ module.exports = async function handler(req, res) {
         json(res, 400, { ok: false, error: "Missing video URL." });
         return;
       }
-      const payload = { commandId: commandId(), type: "cast", url };
+      const payload = commandPayload({ type: "cast", url });
       const latest = sessions.get(code) || {};
       sessions.set(code, { ...latest, command: payload });
-      json(res, 200, { ok: true, commandId: payload.commandId });
+      json(res, 200, { ok: true, commandId: payload.commandId, createdAt: payload.createdAt });
       return;
     }
 
@@ -129,13 +138,30 @@ module.exports = async function handler(req, res) {
         json(res, 400, { ok: false, error: "Unsupported command." });
         return;
       }
-      const payload = { commandId: commandId(), type: "command", command };
+      const payload = commandPayload({ type: "command", command });
       if (command === "seekTo") {
         payload.time = seconds(body.time);
       }
       const latest = sessions.get(code) || {};
       sessions.set(code, { ...latest, command: payload });
-      json(res, 200, { ok: true, commandId: payload.commandId });
+      json(res, 200, { ok: true, commandId: payload.commandId, createdAt: payload.createdAt });
+      return;
+    }
+
+    if (body.type === "ack") {
+      const acknowledgedCommandId = String(body.commandId || "").trim();
+      if (!acknowledgedCommandId) {
+        json(res, 400, { ok: false, error: "Missing commandId." });
+        return;
+      }
+      const latest = sessions.get(code) || {};
+      if (latest.command?.commandId === acknowledgedCommandId) {
+        const { command, ...rest } = latest;
+        sessions.set(code, rest);
+        json(res, 200, { ok: true, cleared: true });
+        return;
+      }
+      json(res, 200, { ok: true, cleared: false });
       return;
     }
 
