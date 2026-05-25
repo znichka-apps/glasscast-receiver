@@ -86,6 +86,7 @@
         mode: "native-video",
         originalUrl,
         playerUrl: originalUrl,
+        title: localNetworkVideo ? "Local video" : originalUrl,
         titleHint: localNetworkVideo ? "Local video" : originalUrl,
         isLocalNetworkVideo: localNetworkVideo,
         reason: "",

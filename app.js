@@ -9,6 +9,8 @@
     "This does not look like a playable video link. Paste a direct video URL or supported video page link.";
   const LOCAL_VIDEO_UNREACHABLE_MESSAGE =
     "Local video could not be reached. Make sure your phone and glasses are on the same Wi-Fi network and keep GlassCast open on your phone.";
+  const LOCAL_NETWORK_BLOCKED_MESSAGE =
+    "Local network access is blocked by this browser. Local phone videos may not work on this display.";
 
   const els = {
     shell: document.getElementById("receiverShell"),
@@ -43,6 +45,7 @@
     autoplayBlocked: false,
     nativeVideoIsLocal: false,
     nativePlaybackStarted: false,
+    nativeVideoReadyForTap: false,
     overlayVisible: true,
     isPlaying: false,
     overlayHideTimer: null,
@@ -52,6 +55,7 @@
     lastStatePublishAt: 0,
     statePublishInFlight: false,
     pollTimer: null,
+    castLoadId: 0,
   };
   state.processedCommandSet = new Set(state.processedCommandIds);
 
@@ -432,6 +436,7 @@
         mode: "native-video",
         originalUrl,
         playerUrl: originalUrl,
+        title: localNetworkVideo ? "Local video" : titleFromUrl(originalUrl),
         titleHint: localNetworkVideo ? "Local video" : titleFromUrl(originalUrl),
         isLocalNetworkVideo: localNetworkVideo,
         reason: "",
@@ -551,6 +556,7 @@
     state.autoplayBlocked = false;
     state.nativeVideoIsLocal = false;
     state.nativePlaybackStarted = false;
+    state.nativeVideoReadyForTap = false;
     state.isPlaying = false;
     els.shell.classList.remove("has-video", "has-critical-status");
     els.overlay.classList.remove("overlay-hidden");
@@ -597,10 +603,66 @@
     });
   }
 
+  function isAutoplayBlock(error) {
+    return error?.name === "NotAllowedError";
+  }
+
+  function getLocalVideoHealthUrl(playerUrl) {
+    try {
+      const url = new URL(playerUrl);
+      url.pathname = "/health";
+      url.search = "";
+      url.hash = "";
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+
+  function isLocalNetworkAccessBlocked(error) {
+    const detail = `${error?.name || ""} ${error?.message || ""}`.toLowerCase();
+    return /private network|local network|address space|targetaddressspace|mixed content|blocked/.test(detail);
+  }
+
+  async function checkLocalVideoReachability(playerUrl) {
+    const healthUrl = getLocalVideoHealthUrl(playerUrl);
+    if (!healthUrl) {
+      console.info("[GlassCast] local health check failure", { url: playerUrl, reason: "invalid-health-url" });
+      return { ok: false, blocked: false };
+    }
+
+    try {
+      const response = await fetch(healthUrl, {
+        method: "GET",
+        cache: "no-store",
+        targetAddressSpace: "local",
+      });
+      console.info(`[GlassCast] local health check ${response.ok ? "success" : "failure"}`, {
+        healthUrl,
+        status: response.status,
+        ok: response.ok,
+      });
+      return { ok: response.ok, blocked: false };
+    } catch (error) {
+      const blocked =
+        isLocalNetworkAccessBlocked(error) ||
+        (window.isSecureContext && window.location.protocol === "https:" && healthUrl.startsWith("http://"));
+      console.info("[GlassCast] local health check failure", {
+        healthUrl,
+        blocked,
+        name: error?.name || "",
+        message: error?.message || "",
+      });
+      return { ok: false, blocked };
+    }
+  }
+
   async function castVideo(url) {
     console.info("[GlassCast] player render/load called", { url });
     const media = resolveMediaUrl(url);
     console.info("[GlassCast] new cast received", { url, mode: media.mode, playerUrl: media.playerUrl });
+    const castLoadId = state.castLoadId + 1;
+    state.castLoadId = castLoadId;
     clearPlayer();
 
     if (media.mode === "unsupported") {
@@ -624,7 +686,6 @@
     if (media.mode === "native-video") {
       console.info("[GlassCast] native video element created", { url: media.playerUrl });
       const video = document.createElement("video");
-      video.src = media.playerUrl;
       video.controls = false;
       video.playsInline = true;
       video.setAttribute("playsinline", "");
@@ -633,7 +694,11 @@
       if (media.isLocalNetworkVideo) {
         console.info("[GlassCast] local video URL loaded", { url: media.playerUrl });
       }
+      video.addEventListener("loadstart", () => {
+        console.info("[GlassCast] loadstart", { local: media.isLocalNetworkVideo });
+      });
       video.addEventListener("play", () => {
+        console.info("[GlassCast] play event", { local: media.isLocalNetworkVideo });
         hideTapToPlay();
         state.nativePlaybackStarted = true;
         setPlaybackActive(true);
@@ -645,6 +710,7 @@
         publishPlaybackState(true);
       });
       video.addEventListener("loadedmetadata", () => {
+        state.nativeVideoReadyForTap = true;
         console.info("[GlassCast] loadedmetadata", {
           local: media.isLocalNetworkVideo,
           duration: video.duration,
@@ -654,6 +720,7 @@
         publishPlaybackState(true);
       });
       video.addEventListener("canplay", () => {
+        state.nativeVideoReadyForTap = true;
         console.info("[GlassCast] canplay", { local: media.isLocalNetworkVideo });
       });
       video.addEventListener("seeked", () => publishPlaybackState(true));
@@ -687,6 +754,24 @@
       state.nativeVideoIsLocal = Boolean(media.isLocalNetworkVideo);
       els.shell.classList.add("has-video");
       startStatePublishing();
+      if (media.isLocalNetworkVideo) {
+        setStatus("Checking local video...");
+        const health = await checkLocalVideoReachability(media.playerUrl);
+        if (state.castLoadId !== castLoadId) {
+          return;
+        }
+        if (!health.ok) {
+          setPlaybackActive(false);
+          setStatus(health.blocked ? LOCAL_NETWORK_BLOCKED_MESSAGE : LOCAL_VIDEO_UNREACHABLE_MESSAGE, true);
+          publishPlaybackState(true);
+          return;
+        }
+      }
+      if (state.castLoadId !== castLoadId) {
+        return;
+      }
+      video.src = media.playerUrl;
+      video.load();
       await tryAutoplay();
       return;
     }
@@ -748,6 +833,7 @@
       muted: state.video.muted,
       local: state.nativeVideoIsLocal,
     });
+    let autoplayError = null;
     try {
       await state.video.play();
       hideTapToPlay();
@@ -758,6 +844,7 @@
       console.info("[GlassCast] play success", { source: "autoplay" });
       return true;
     } catch (error) {
+      autoplayError = error;
       logPlayFailure("autoplay", error);
     }
 
@@ -776,11 +863,17 @@
         return true;
       } catch (error) {
         state.video.muted = previousMuted;
+        autoplayError = error;
         logPlayFailure("muted-autoplay", error);
       }
     }
 
-    showTapToPlay("Select Tap to Play on the glasses.", true);
+    if (!state.nativeVideoIsLocal || state.nativeVideoReadyForTap || isAutoplayBlock(autoplayError)) {
+      showTapToPlay("Select Tap to Play on the glasses.", true);
+    } else {
+      setPlaybackActive(false);
+      setStatus(LOCAL_VIDEO_UNREACHABLE_MESSAGE, true);
+    }
     publishPlaybackState(true);
     return false;
   }
