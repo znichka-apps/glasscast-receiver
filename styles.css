@@ -263,14 +263,16 @@ textarea:focus {
 
 .tap-play {
   position: absolute;
-  z-index: 4;
-  left: 90px;
-  right: 90px;
-  bottom: 32px;
-  min-height: 88px;
+  z-index: 8;
+  top: 50%;
+  left: 50%;
+  width: 360px;
+  min-height: 104px;
+  transform: translate(-50%, -50%);
   border-color: var(--accent);
   background: #123031;
-  font-size: 25px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.58);
+  font-size: 32px;
   font-weight: 800;
 }
 

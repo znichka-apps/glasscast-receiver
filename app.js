@@ -118,6 +118,11 @@
   }
 
   function showOverlayTemporarily() {
+    if (state.pendingPlay) {
+      showOverlay();
+      return;
+    }
+
     showOverlay();
     scheduleOverlayHide();
   }
@@ -497,6 +502,20 @@
     publishPlaybackState(true);
   }
 
+  function showTapToPlay(message) {
+    state.pendingPlay = true;
+    setPlaybackActive(false);
+    els.tapToPlay.classList.remove("hidden");
+    els.tapToPlay.focus();
+    setStatus(message || "Playback needs to be started on the glasses.");
+    showOverlay();
+  }
+
+  function hideTapToPlay() {
+    els.tapToPlay.classList.add("hidden");
+    state.pendingPlay = false;
+  }
+
   async function castVideo(url) {
     console.info("[GlassCast] player render/load called", { url });
     const media = resolveMediaUrl(url);
@@ -530,9 +549,9 @@
       video.autoplay = true;
       video.preload = "auto";
       video.addEventListener("play", () => {
-        els.tapToPlay.classList.add("hidden");
-        state.pendingPlay = false;
+        hideTapToPlay();
         setPlaybackActive(true);
+        setStatus("Playing.");
         publishPlaybackState(true);
       });
       video.addEventListener("pause", () => {
@@ -561,7 +580,7 @@
       state.video = video;
       els.shell.classList.add("has-video");
       startStatePublishing();
-      await tryPlay();
+      await tryAutoplay();
       return;
     }
 
@@ -612,23 +631,42 @@
     els.playerHost.replaceChildren(wrapper);
   }
 
-  async function tryPlay() {
+  async function tryAutoplay() {
     if (!state.video) {
-      return;
+      return false;
     }
 
     try {
       await state.video.play();
-      els.tapToPlay.classList.add("hidden");
-      state.pendingPlay = false;
+      hideTapToPlay();
       setPlaybackActive(true);
       setStatus("Playing.");
+      publishPlaybackState(true);
+      return true;
     } catch {
-      state.pendingPlay = true;
-      setPlaybackActive(false);
-      els.tapToPlay.classList.remove("hidden");
-      els.tapToPlay.focus();
-      setStatus("Autoplay blocked. Select Tap to Play on the display.");
+      showTapToPlay("Playback needs to be started on the glasses.");
+      publishPlaybackState(true);
+      return false;
+    }
+  }
+
+  async function playFromTapToPlay() {
+    if (!state.video) {
+      return false;
+    }
+
+    try {
+      await state.video.play();
+      hideTapToPlay();
+      setPlaybackActive(true);
+      setStatus("Playing.");
+      publishPlaybackState(true);
+      scheduleOverlayHide();
+      return true;
+    } catch {
+      showTapToPlay("Playback needs to be started on the glasses.");
+      publishPlaybackState(true);
+      return false;
     }
   }
 
@@ -881,15 +919,21 @@
 
     if (command === "playPause") {
       if (video.paused) {
-        await tryPlay();
-        setCommandStatus(command, "sent");
+        if (state.pendingPlay) {
+          showTapToPlay("Use Tap to Play on the glasses to start this video.");
+        } else {
+          await tryAutoplay();
+        }
       } else {
         video.pause();
         setCommandStatus(command, "sent");
       }
     } else if (command === "play") {
-      await tryPlay();
-      setCommandStatus(command, "sent");
+      if (state.pendingPlay) {
+        showTapToPlay("Use Tap to Play on the glasses to start this video.");
+      } else {
+        await tryAutoplay();
+      }
     } else if (command === "pause") {
       video.pause();
       setCommandStatus(command, "sent");
@@ -1131,7 +1175,7 @@
 
   function init() {
     els.code.textContent = state.code;
-    els.tapToPlay.addEventListener("click", tryPlay);
+    els.tapToPlay.addEventListener("click", playFromTapToPlay);
     els.showCode.addEventListener("click", () => showCodeOverlay(true));
     document.addEventListener("keydown", handleKeys);
     window.addEventListener("message", handlePlayerMessage);
