@@ -56,10 +56,11 @@ https://your-project.vercel.app/phone
 
 GlassCast accepts:
 
-- Direct video files ending in `.mp4`, `.webm`, `.ogg`, or `.mov`
 - YouTube watch/share/shorts URLs
+- YouTube live links where embeddable
 - Vimeo URLs in the form `vimeo.com/VIDEO_ID`
 - Dailymotion URLs in the form `dailymotion.com/video/VIDEO_ID` or `dai.ly/VIDEO_ID`
+- Direct public video URLs
 
 YouTube links are converted to an embed URL with `enablejsapi=1`. Vimeo and Dailymotion links are converted to their player embeds.
 
@@ -125,4 +126,4 @@ Unsupported links include bare `youtube.com`, YouTube search pages, generic webs
 
 The API uses in-memory serverless state. That keeps the MVP simple, but it is not durable and may reset when a serverless instance restarts or when Vercel routes requests to a different instance. A future production version should use durable shared storage such as Vercel KV.
 
-Embedded player commands are best-effort. Native video files support play/pause/seek/stop/fullscreen directly. YouTube, Vimeo, and Dailymotion may require tapping play on the display or using their embedded controls depending on browser and embed restrictions.
+Embedded player commands are best-effort. Direct public video URLs support play/pause/seek/stop/fullscreen directly. YouTube, Vimeo, and Dailymotion may require tapping play on the display or using their embedded controls depending on browser and embed restrictions.

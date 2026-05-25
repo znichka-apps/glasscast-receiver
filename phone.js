@@ -4,8 +4,9 @@
   const urlInput = document.getElementById("urlInput");
   const status = document.getElementById("phoneStatus");
   const controlButtons = document.querySelectorAll("[data-command]");
+  const ENABLE_LOCAL_VIDEO_EXPERIMENT = false;
   const UNSUPPORTED_MESSAGE =
-    "This does not look like a playable video link. Paste a direct video URL or supported video page link.";
+    "This link is not supported yet. Try a YouTube link or supported video URL.";
 
   function normalizeCode() {
     const code = codeInput.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -56,6 +57,10 @@
     );
   }
 
+  function isPrivateNetworkUrl(url) {
+    return isPrivateIpv4(url.hostname) || isLocalHostname(url.hostname);
+  }
+
   function resolveMediaUrl(input) {
     const originalUrl = String(input || "").trim();
     const base = {
@@ -78,7 +83,11 @@
 
     const localNetworkVideo = isLocalNetworkVideoUrl(url);
 
-    if (/\.(mp4|webm|ogg|mov)(?:$|[?#])/i.test(url.href) || localNetworkVideo) {
+    if (!ENABLE_LOCAL_VIDEO_EXPERIMENT && isPrivateNetworkUrl(url)) {
+      return base;
+    }
+
+    if (/\.(mp4|webm|ogg|mov)(?:$|[?#])/i.test(url.href) || (ENABLE_LOCAL_VIDEO_EXPERIMENT && localNetworkVideo)) {
       if (localNetworkVideo) {
         console.info("Resolved local video server URL", { url: originalUrl });
       }

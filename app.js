@@ -4,13 +4,10 @@
   const COMMAND_MAX_AGE_MS = 10000;
   const RECENT_COMMAND_LIMIT = 25;
   const PROCESSED_COMMANDS_KEY = "glasscast.processedCommandIds.v1";
+  const ENABLE_LOCAL_VIDEO_EXPERIMENT = false;
   const LOCAL_MUTED_AUTOPLAY_FALLBACK = true;
   const UNSUPPORTED_MESSAGE =
-    "This does not look like a playable video link. Paste a direct video URL or supported video page link.";
-  const LOCAL_VIDEO_UNREACHABLE_MESSAGE =
-    "Local video could not be reached. Make sure your phone and glasses are on the same Wi-Fi network and keep GlassCast open on your phone.";
-  const LOCAL_NETWORK_BLOCKED_MESSAGE =
-    "Local network access is blocked by this browser. Local phone videos may not work on this display.";
+    "This link is not supported yet. Try a YouTube link or supported video URL.";
 
   const els = {
     shell: document.getElementById("receiverShell"),
@@ -405,6 +402,10 @@
     );
   }
 
+  function isPrivateNetworkUrl(url) {
+    return isPrivateIpv4(url.hostname) || isLocalHostname(url.hostname);
+  }
+
   function resolveMediaUrl(input) {
     const originalUrl = String(input || "").trim();
     console.info("[GlassCast] resolveMediaUrl called", { url: originalUrl });
@@ -428,7 +429,11 @@
     const directVideoPattern = /\.(mp4|webm|ogg|mov)(?:$|[?#])/i;
     const localNetworkVideo = isLocalNetworkVideoUrl(url);
 
-    if (directVideoPattern.test(url.href) || localNetworkVideo) {
+    if (!ENABLE_LOCAL_VIDEO_EXPERIMENT && isPrivateNetworkUrl(url)) {
+      return base;
+    }
+
+    if (directVideoPattern.test(url.href) || (ENABLE_LOCAL_VIDEO_EXPERIMENT && localNetworkVideo)) {
       if (localNetworkVideo) {
         console.info("Resolved local video server URL", { url: originalUrl });
       }
@@ -574,7 +579,7 @@
     if (state.nativeVideoIsLocal && state.video) {
       state.video.controls = true;
     }
-    setStatus(message || "Select this on your glasses to start the local video.", isError);
+    setStatus(message || "Select this on your glasses to start the video.", isError);
     showOverlay();
     refreshFocusableElements();
     focusTapToPlay();
@@ -743,7 +748,7 @@
         setPlaybackActive(false);
         setStatus(
           media.isLocalNetworkVideo
-            ? LOCAL_VIDEO_UNREACHABLE_MESSAGE
+            ? UNSUPPORTED_MESSAGE
             : "The video could not be loaded. Try another direct file URL.",
           true,
         );
@@ -754,7 +759,7 @@
       state.nativeVideoIsLocal = Boolean(media.isLocalNetworkVideo);
       els.shell.classList.add("has-video");
       startStatePublishing();
-      if (media.isLocalNetworkVideo) {
+      if (ENABLE_LOCAL_VIDEO_EXPERIMENT && media.isLocalNetworkVideo) {
         setStatus("Checking local video...");
         const health = await checkLocalVideoReachability(media.playerUrl);
         if (state.castLoadId !== castLoadId) {
@@ -762,7 +767,7 @@
         }
         if (!health.ok) {
           setPlaybackActive(false);
-          setStatus(health.blocked ? LOCAL_NETWORK_BLOCKED_MESSAGE : LOCAL_VIDEO_UNREACHABLE_MESSAGE, true);
+          setStatus(UNSUPPORTED_MESSAGE, true);
           publishPlaybackState(true);
           return;
         }
@@ -872,7 +877,7 @@
       showTapToPlay("Select Tap to Play on the glasses.", true);
     } else {
       setPlaybackActive(false);
-      setStatus(LOCAL_VIDEO_UNREACHABLE_MESSAGE, true);
+      setStatus(UNSUPPORTED_MESSAGE, true);
     }
     publishPlaybackState(true);
     return false;
