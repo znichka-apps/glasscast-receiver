@@ -47,6 +47,7 @@
     overlayHideTimer: null,
     statePublishTimer: null,
     statePublishTimeout: null,
+    activeFocusIndex: -1,
     lastStatePublishAt: 0,
     statePublishInFlight: false,
     pollTimer: null,
@@ -125,11 +126,44 @@
   function showOverlayTemporarily() {
     if (state.autoplayBlocked || state.pendingPlay) {
       showOverlay();
+      focusTapToPlay();
       return;
     }
 
     showOverlay();
     scheduleOverlayHide();
+  }
+
+  function getFocusables() {
+    return Array.from(document.querySelectorAll(".focusable:not(.hidden)")).filter(
+      (el) => !el.disabled && el.offsetParent !== null,
+    );
+  }
+
+  function focusElement(el) {
+    if (!el) {
+      return;
+    }
+
+    const focusables = getFocusables();
+    state.activeFocusIndex = focusables.indexOf(el);
+    el.focus();
+  }
+
+  function focusTapToPlay() {
+    if (!state.autoplayBlocked || els.tapToPlayOverlay.classList.contains("hidden")) {
+      return;
+    }
+
+    focusElement(els.tapToPlayButton);
+  }
+
+  function isActivationKey(key) {
+    return key === "Enter" || key === " " || key === "Spacebar";
+  }
+
+  function isAutoplayBlockedPlayKey(key) {
+    return isActivationKey(key) || ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(key);
   }
 
   function setPlaybackActive(isPlaying) {
@@ -519,10 +553,10 @@
     els.tapToPlayStatus.classList.toggle("hidden", !message);
     setStatus(message || "Select this on your glasses to start the local video.", isError);
     showOverlay();
-    els.tapToPlayButton.focus();
+    focusTapToPlay();
     console.info("[GlassCast] Tap to Play focused");
     window.requestAnimationFrame(() => {
-      els.tapToPlayButton.focus();
+      focusTapToPlay();
     });
   }
 
@@ -694,14 +728,14 @@
       }
     }
 
-    showTapToPlay("Playback still needs a glasses-side select gesture.", true);
+    showTapToPlay("Select Tap to Play on the glasses.", true);
     publishPlaybackState(true);
     return false;
   }
 
   async function attemptUserGesturePlay(eventOrSource) {
     if (eventOrSource && typeof eventOrSource === "object" && eventOrSource.type === "keydown") {
-      if (eventOrSource.key !== "Enter" && eventOrSource.key !== " ") {
+      if (!isActivationKey(eventOrSource.key)) {
         return false;
       }
       eventOrSource.preventDefault();
@@ -735,7 +769,7 @@
       return true;
     } catch (error) {
       console.info("[GlassCast] play failure", { source, error });
-      showTapToPlay("Playback still needs a glasses-side select gesture.", true);
+      showTapToPlay("Select Tap to Play on the glasses.", true);
       publishPlaybackState(true);
       return false;
     }
@@ -1212,26 +1246,27 @@
   }
 
   function moveFocus(direction) {
-    const focusables = Array.from(document.querySelectorAll(".focusable:not(.hidden)")).filter(
-      (el) => !el.disabled && el.offsetParent !== null,
-    );
+    const focusables = getFocusables();
     if (!focusables.length) {
       return;
     }
 
-    const currentIndex = Math.max(0, focusables.indexOf(document.activeElement));
+    const domIndex = focusables.indexOf(document.activeElement);
+    const currentIndex = domIndex >= 0 ? domIndex : Math.max(0, state.activeFocusIndex);
     const nextIndex =
       direction === "previous"
         ? (currentIndex - 1 + focusables.length) % focusables.length
         : (currentIndex + 1) % focusables.length;
+    state.activeFocusIndex = nextIndex;
     focusables[nextIndex].focus();
   }
 
   async function handleKeys(event) {
     if (state.autoplayBlocked) {
-      await attemptUserGesturePlay(`global-keydown:${event.key}`);
-      if (event.key === "Enter" || event.key === " ") {
+      if (isAutoplayBlockedPlayKey(event.key)) {
         event.preventDefault();
+        focusTapToPlay();
+        await attemptUserGesturePlay(`global-keydown:${event.key}`);
         return;
       }
     }
