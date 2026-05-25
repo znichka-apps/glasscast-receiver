@@ -6,6 +6,8 @@
   const PROCESSED_COMMANDS_KEY = "glasscast.processedCommandIds.v1";
   const UNSUPPORTED_MESSAGE =
     "This does not look like a playable video link. Paste a direct video URL or supported video page link.";
+  const LOCAL_VIDEO_UNREACHABLE_MESSAGE =
+    "Local video could not be reached. Make sure your phone and glasses are on the same Wi-Fi network and keep GlassCast open on your phone.";
 
   const els = {
     shell: document.getElementById("receiverShell"),
@@ -310,6 +312,40 @@
     }
   }
 
+  function isPrivateIpv4(hostname) {
+    const parts = hostname.split(".");
+    if (parts.length !== 4) {
+      return false;
+    }
+
+    const octets = parts.map((part) => {
+      if (!/^\d{1,3}$/.test(part)) {
+        return -1;
+      }
+      return Number(part);
+    });
+
+    if (octets.some((octet) => octet < 0 || octet > 255)) {
+      return false;
+    }
+
+    return (
+      octets[0] === 10 ||
+      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] === 192 && octets[1] === 168)
+    );
+  }
+
+  function isLocalNetworkVideoUrl(url) {
+    return (
+      url.protocol === "http:" &&
+      isPrivateIpv4(url.hostname) &&
+      Boolean(url.port) &&
+      url.pathname === "/video" &&
+      url.searchParams.has("token")
+    );
+  }
+
   function resolveMediaUrl(input) {
     const originalUrl = String(input || "").trim();
     console.info("[GlassCast] resolveMediaUrl called", { url: originalUrl });
@@ -331,13 +367,15 @@
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     const path = url.pathname;
     const directVideoPattern = /\.(mp4|webm|ogg|mov)(?:$|[?#])/i;
+    const localNetworkVideo = isLocalNetworkVideoUrl(url);
 
-    if (directVideoPattern.test(url.href)) {
+    if (directVideoPattern.test(url.href) || localNetworkVideo) {
       return {
         mode: "native-video",
         originalUrl,
         playerUrl: originalUrl,
-        titleHint: titleFromUrl(originalUrl),
+        titleHint: localNetworkVideo ? "Local video" : titleFromUrl(originalUrl),
+        isLocalNetworkVideo: localNetworkVideo,
         reason: "",
       };
     }
@@ -511,7 +549,12 @@
       });
       video.addEventListener("error", () => {
         setPlaybackActive(false);
-        setStatus("The video could not be loaded. Try another direct file URL.", true);
+        setStatus(
+          media.isLocalNetworkVideo
+            ? LOCAL_VIDEO_UNREACHABLE_MESSAGE
+            : "The video could not be loaded. Try another direct file URL.",
+          true,
+        );
         publishPlaybackState(true);
       });
       els.playerHost.replaceChildren(video);

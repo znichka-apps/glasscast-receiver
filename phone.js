@@ -18,6 +18,40 @@
     status.classList.toggle("error", Boolean(isError));
   }
 
+  function isPrivateIpv4(hostname) {
+    const parts = hostname.split(".");
+    if (parts.length !== 4) {
+      return false;
+    }
+
+    const octets = parts.map((part) => {
+      if (!/^\d{1,3}$/.test(part)) {
+        return -1;
+      }
+      return Number(part);
+    });
+
+    if (octets.some((octet) => octet < 0 || octet > 255)) {
+      return false;
+    }
+
+    return (
+      octets[0] === 10 ||
+      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] === 192 && octets[1] === 168)
+    );
+  }
+
+  function isLocalNetworkVideoUrl(url) {
+    return (
+      url.protocol === "http:" &&
+      isPrivateIpv4(url.hostname) &&
+      Boolean(url.port) &&
+      url.pathname === "/video" &&
+      url.searchParams.has("token")
+    );
+  }
+
   function resolveMediaUrl(input) {
     const originalUrl = String(input || "").trim();
     const base = {
@@ -38,7 +72,7 @@
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     const path = url.pathname;
 
-    if (/\.(mp4|webm|ogg|mov)(?:$|[?#])/i.test(url.href)) {
+    if (/\.(mp4|webm|ogg|mov)(?:$|[?#])/i.test(url.href) || isLocalNetworkVideoUrl(url)) {
       return { mode: "native-video", originalUrl, playerUrl: originalUrl, titleHint: originalUrl, reason: "" };
     }
 
