@@ -3,16 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=600, height=600, initial-scale=1.0">
+    <meta name="theme-color" content="#020516">
     <title>GlassCast Receiver</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.json">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body class="display-page">
     <main id="receiverShell" class="display-shell" aria-label="GlassCast Receiver">
       <div id="receiverOverlay" class="receiver-overlay overlay-visible">
         <header class="display-header">
-          <div>
-            <h1>GlassCast</h1>
-            <p class="prompt">Open /phone on your phone</p>
+          <div class="brand-lockup" aria-label="GlassCast">
+            <img src="/brand/glasscast-logo-primary-transparent.png" alt="GlassCast">
           </div>
           <button id="showCodeButton" class="focusable secondary-button hidden" type="button">Show Code</button>
         </header>
@@ -20,23 +23,23 @@
         <section id="codeOverlay" class="code-overlay" aria-live="polite">
           <p class="label">Session Code</p>
           <div id="sessionCode" class="session-code">------</div>
-          <p class="overlay-help">Open /phone on your phone</p>
+          <p class="overlay-help">Open the GlassCast app on your phone.</p>
         </section>
 
         <footer class="display-footer">
           <div>
-            <p class="label">Now Playing</p>
-            <p id="nowPlaying" class="now-playing">Nothing yet</p>
+            <p class="label">Receiver</p>
+            <p id="nowPlaying" class="now-playing">Ready for a video</p>
           </div>
-          <p id="statusText" class="status-text" aria-live="polite">Waiting for phone command...</p>
+          <p id="statusText" class="status-text" aria-live="polite">Ready to receive.</p>
         </footer>
       </div>
 
       <section class="player-panel" aria-label="Player">
         <div id="playerHost" class="player-host">
           <div class="empty-state">
-            <p>Ready to receive</p>
-            <span>Cast a supported video link from your phone.</span>
+            <p>Ready to receive.</p>
+            <span>Open the GlassCast app on your phone.</span>
           </div>
         </div>
       </section>

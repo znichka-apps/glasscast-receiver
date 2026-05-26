@@ -1,14 +1,16 @@
 :root {
   color-scheme: dark;
-  --bg: #000000;
-  --surface: #111318;
-  --surface-strong: #1b2028;
-  --line: #343b47;
-  --text: #ffffff;
-  --muted: #c6ccd6;
-  --soft: #8f98a6;
-  --accent: #5eead4;
-  --accent-strong: #22d3ee;
+  --bg: #020516;
+  --surface: #0c1326;
+  --surface-strong: #172653;
+  --line: rgba(142, 155, 194, 0.34);
+  --text: #e9eef9;
+  --muted: #8e9bc2;
+  --soft: #8e9bc2;
+  --accent: #32d17c;
+  --accent-strong: #7ef0b2;
+  --purple: #5a4fcf;
+  --gold: #f6d35c;
   --danger: #ff7a7a;
 }
 
@@ -42,6 +44,7 @@ textarea {
   width: 600px;
   height: 600px;
   padding: 8px;
+  background: linear-gradient(180deg, #020516 0%, #071028 100%);
   overflow: hidden;
 }
 
@@ -54,7 +57,7 @@ textarea {
   z-index: 6;
   inset: 8px;
   display: grid;
-  grid-template-rows: 86px 1fr 104px;
+  grid-template-rows: 92px 1fr 112px;
   gap: 10px;
   opacity: 1;
   pointer-events: auto;
@@ -84,6 +87,12 @@ textarea {
   border-radius: 8px;
 }
 
+.display-header,
+.display-footer,
+.code-overlay {
+  background: rgba(12, 19, 38, 0.94);
+}
+
 .display-shell.has-video .display-header,
 .display-shell.has-video .display-footer {
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38);
@@ -94,7 +103,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 12px 16px;
 }
 
 h1,
@@ -102,10 +111,17 @@ p {
   margin: 0;
 }
 
-.display-header h1 {
-  font-size: 30px;
-  line-height: 1;
-  letter-spacing: 0;
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.brand-lockup img {
+  display: block;
+  width: min(320px, 100%);
+  max-height: 54px;
+  object-fit: contain;
 }
 
 .prompt,
@@ -123,12 +139,13 @@ p {
 .player-panel {
   position: absolute;
   z-index: 1;
-  top: 104px;
+  top: 110px;
   right: 8px;
-  bottom: 122px;
+  bottom: 130px;
   left: 8px;
   min-height: 0;
   overflow: hidden;
+  background: rgba(12, 19, 38, 0.78);
 }
 
 .display-shell.has-video .player-panel {
@@ -149,7 +166,7 @@ p {
 .player-host iframe {
   display: block;
   border: 0;
-  background: #05070a;
+  background: #020516;
 }
 
 .empty-state {
@@ -177,7 +194,7 @@ p {
   display: grid;
   grid-template-columns: 1fr;
   gap: 8px;
-  padding: 14px 16px;
+  padding: 16px;
 }
 
 .label {
@@ -192,7 +209,7 @@ p {
   max-width: 548px;
   overflow: hidden;
   color: var(--text);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -200,7 +217,9 @@ p {
 }
 
 .status-text {
-  font-size: 14px;
+  color: var(--accent-strong);
+  font-size: 18px;
+  font-weight: 700;
   line-height: 1.25;
 }
 
@@ -208,9 +227,9 @@ p {
   position: absolute;
   z-index: 7;
   top: 108px;
-  left: 42px;
-  right: 42px;
-  padding: 22px 24px 24px;
+  left: 34px;
+  right: 34px;
+  padding: 24px 24px 26px;
   text-align: center;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
 }
@@ -222,10 +241,11 @@ p {
 .session-code {
   margin-top: 8px;
   color: var(--accent);
-  font-size: 76px;
+  font-size: 84px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0.08em;
+  text-shadow: 0 0 26px rgba(50, 209, 124, 0.18);
 }
 
 .overlay-help {
@@ -282,7 +302,7 @@ textarea:focus {
   min-height: 220px;
   padding: 28px 30px;
   border-color: var(--accent);
-  background: #123031;
+  background: #0c1326;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.58);
   text-align: center;
 }
@@ -325,7 +345,7 @@ textarea:focus {
 .phone-page {
   min-width: 320px;
   min-height: 100vh;
-  background: #07090d;
+  background: var(--bg);
 }
 
 .phone-shell {
@@ -338,16 +358,14 @@ textarea:focus {
   margin-bottom: 18px;
 }
 
-.eyebrow {
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.phone-logo {
+  display: block;
+  width: min(280px, 82vw);
+  height: auto;
 }
 
 .phone-header h1 {
-  margin-top: 6px;
+  margin-top: 14px;
   font-size: 34px;
   line-height: 1.08;
 }
@@ -374,7 +392,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--text);
-  background: #090c12;
+  background: #070b18;
 }
 
 input {
@@ -397,7 +415,7 @@ textarea {
 .primary-action {
   min-height: 58px;
   border-color: var(--accent);
-  background: #0f3a3b;
+  background: #103927;
   font-size: 18px;
   font-weight: 800;
 }

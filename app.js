@@ -77,7 +77,7 @@
   }
 
   function setNowPlaying(text) {
-    els.nowPlaying.textContent = text || "Nothing yet";
+    els.nowPlaying.textContent = text || "Ready for a video";
   }
 
   function showCodeOverlay(show) {
@@ -606,7 +606,7 @@
     if (state.nativeVideoIsLocal && state.video) {
       state.video.controls = true;
     }
-    setStatus(message || "Select this on your glasses to start the video.", isError);
+    setStatus(message || "Select Tap to Play.", isError);
     showOverlay();
     refreshFocusableElements();
     focusTapToPlay();
@@ -703,7 +703,7 @@
       state.mediaUrl = media.originalUrl;
       publishPlaybackState(true);
       renderEmpty("Unsupported link", media.reason);
-      setNowPlaying("Nothing yet");
+      setNowPlaying("Ready for a video");
       setStatus(media.reason, true);
       return;
     }
@@ -734,11 +734,14 @@
         hideTapToPlay();
         state.nativePlaybackStarted = true;
         setPlaybackActive(true);
-        setStatus("Playing.");
+        setStatus("Casting video.");
         publishPlaybackState(true);
       });
       video.addEventListener("pause", () => {
         setPlaybackActive(false);
+        if (!video.ended) {
+          setStatus("Paused.");
+        }
         publishPlaybackState(true);
       });
       video.addEventListener("loadedmetadata", () => {
@@ -759,7 +762,7 @@
       video.addEventListener("timeupdate", () => publishPlaybackState(false));
       video.addEventListener("ended", () => {
         setPlaybackActive(false);
-        setStatus("Playback ended.");
+        setStatus("Stopped.");
         publishPlaybackState(true);
       });
       video.addEventListener("error", () => {
@@ -773,12 +776,7 @@
           console.info("Local video playback error", { url: media.playerUrl, error: video.error });
         }
         setPlaybackActive(false);
-        setStatus(
-          media.isLocalNetworkVideo
-            ? UNSUPPORTED_MESSAGE
-            : "The video could not be loaded. Try another direct file URL.",
-          true,
-        );
+        setStatus(media.isLocalNetworkVideo ? UNSUPPORTED_MESSAGE : "This video cannot be embedded.", true);
         publishPlaybackState(true);
       });
       els.playerHost.replaceChildren(video);
@@ -787,7 +785,7 @@
       els.shell.classList.add("has-video");
       startStatePublishing();
       if (ENABLE_LOCAL_VIDEO_EXPERIMENT && media.isLocalNetworkVideo) {
-        setStatus("Checking local video...");
+        setStatus("Casting video.");
         const health = await checkLocalVideoReachability(media.playerUrl);
         if (state.castLoadId !== castLoadId) {
           return;
@@ -838,11 +836,11 @@
     startStatePublishing();
 
     if (media.mode === "youtube") {
-      setStatus("YouTube controls may require tapping play on the display.");
+      setStatus("Casting video.");
     } else if (media.mode === "dailymotion") {
-      setStatus("Dailymotion controls and timeline are best-effort. If playback restarts, use the embedded controls.");
+      setStatus("Casting video.");
     } else {
-      setStatus("Embedded player controls are best-effort for this source.");
+      setStatus("Casting video.");
     }
   }
 
@@ -871,7 +869,7 @@
       hideTapToPlay();
       state.nativePlaybackStarted = true;
       setPlaybackActive(true);
-      setStatus("Playing.");
+      setStatus("Casting video.");
       publishPlaybackState(true);
       console.info("[GlassCast] play success", { source: "autoplay" });
       return true;
@@ -889,7 +887,7 @@
         hideTapToPlay();
         state.nativePlaybackStarted = true;
         setPlaybackActive(true);
-        setStatus("Started muted. Use your phone volume or glasses controls if audio is unavailable.");
+        setStatus("Casting video.");
         publishPlaybackState(true);
         console.info("[GlassCast] play success", { source: "muted-autoplay" });
         return true;
@@ -901,7 +899,7 @@
     }
 
     if (!state.nativeVideoIsLocal || state.nativeVideoReadyForTap || isAutoplayBlock(autoplayError)) {
-      showTapToPlay("Select Tap to Play on the glasses.", true);
+      showTapToPlay("Select Tap to Play.", true);
     } else {
       setPlaybackActive(false);
       setStatus(UNSUPPORTED_MESSAGE, true);
@@ -942,7 +940,7 @@
       hideTapToPlay();
       state.nativePlaybackStarted = true;
       setPlaybackActive(true);
-      setStatus("Playing.");
+      setStatus("Casting video.");
       publishPlaybackState(true);
       scheduleOverlayHide();
       console.info("[GlassCast] play success", { source });
@@ -958,7 +956,7 @@
           hideTapToPlay();
           state.nativePlaybackStarted = true;
           setPlaybackActive(true);
-          setStatus("Started muted.");
+          setStatus("Casting video.");
           publishPlaybackState(true);
           scheduleOverlayHide();
           console.info("[GlassCast] play success", { source: `${source}:muted-fallback` });
@@ -1008,7 +1006,37 @@
   }
 
   function setCommandStatus(command, result, isError) {
-    setStatus(`Command: ${command} ${result}`, isError);
+    if (isError) {
+      setStatus(result || "This video cannot be embedded.", true);
+      return;
+    }
+
+    if (command === "pause") {
+      setStatus("Paused.");
+      return;
+    }
+
+    if (command === "stop") {
+      setStatus("Stopped.");
+      return;
+    }
+
+    if (command === "play" || command === "playPause") {
+      setStatus(state.isPlaying ? "Casting video." : "Paused.");
+      return;
+    }
+
+    if (command === "seekBack" || command === "seekForward" || command === "seekTo") {
+      setStatus("Casting video.");
+      return;
+    }
+
+    if (command === "fullscreen") {
+      setStatus("Casting video.");
+      return;
+    }
+
+    setStatus("Casting video.");
   }
 
   function postToYoutube(func, args) {
@@ -1029,7 +1057,7 @@
 
   function seekYoutubeTo(time) {
     if (youtubeTimelineUnavailable()) {
-      setStatus("Timeline unavailable for this live stream.");
+      setStatus("Live stream timeline unavailable.");
       publishPlaybackState(true);
       return;
     }
@@ -1041,21 +1069,21 @@
 
   function sendYoutubeSeek(command) {
     if (youtubeTimelineUnavailable()) {
-      setStatus("Timeline unavailable for this live stream.");
+      setStatus("Live stream timeline unavailable.");
       publishPlaybackState(true);
       return;
     }
 
     if (typeof state.youtubeCurrentTime !== "number" || Number.isNaN(state.youtubeCurrentTime)) {
       requestYoutubeTime();
-      setCommandStatus(command, "sent. YouTube seek may be limited until playback starts");
+      setStatus("Timeline unavailable for this player.");
       return;
     }
 
     const offset = command === "seekBack" ? -SEEK_SECONDS : SEEK_SECONDS;
     const nextTime = Math.max(0, state.youtubeCurrentTime + offset);
     seekYoutubeTo(nextTime);
-    setCommandStatus(command, "sent to YouTube");
+    setCommandStatus(command, "sent");
   }
 
   function sendYoutubeCommand(command, time) {
@@ -1070,7 +1098,7 @@
         setPlaybackActive(true);
       }
       publishPlaybackState(true);
-      setStatus("Sent play/pause to YouTube. Command: playPause sent");
+      setStatus(state.isPlaying ? "Casting video." : "Paused.");
       return;
     }
 
@@ -1079,7 +1107,7 @@
       state.youtubePlaying = true;
       setPlaybackActive(true);
       publishPlaybackState(true);
-      setStatus("Sent play to YouTube. Command: play sent");
+      setStatus("Casting video.");
       return;
     }
 
@@ -1088,7 +1116,7 @@
       state.youtubePlaying = false;
       setPlaybackActive(false);
       publishPlaybackState(true);
-      setStatus("Sent pause to YouTube. Command: pause sent");
+      setStatus("Paused.");
       return;
     }
 
@@ -1097,7 +1125,7 @@
       state.youtubePlaying = false;
       setPlaybackActive(false);
       publishPlaybackState(true);
-      setStatus("Sent stop to YouTube. Command: stop sent");
+      setStatus("Stopped.");
       return;
     }
 
@@ -1108,7 +1136,7 @@
 
     if (command === "seekTo") {
       seekYoutubeTo(time);
-      setCommandStatus(command, "sent to YouTube");
+      setCommandStatus(command, "sent");
       return;
     }
 
@@ -1144,13 +1172,13 @@
     if (command === "seekBack" || command === "seekForward") {
       state.lastSeekCommand = command;
       postObjectToIframe({ method });
-      setCommandStatus(command, "sent. Controls may be limited for this player");
+      setCommandStatus(command, "sent");
       return;
     }
 
     if (command === "seekTo") {
       postObjectToIframe({ method: "setCurrentTime", value: finiteSeconds(time) });
-      setCommandStatus(command, "sent. Controls may be limited for this player");
+      setCommandStatus(command, "sent");
       publishPlaybackState(true);
       return;
     }
@@ -1163,11 +1191,11 @@
         setPlaybackActive(false);
       }
       publishPlaybackState(true);
-      setCommandStatus(command, "sent. Controls may be limited for this player");
+      setCommandStatus(command, "sent");
       return;
     }
 
-    setCommandStatus(command, "not supported. Controls may be limited for this player");
+    setCommandStatus(command, "This video cannot be embedded.", true);
   }
 
   function sendDailymotionCommand(command, time) {
@@ -1204,17 +1232,17 @@
         setPlaybackActive(false);
       }
       publishPlaybackState(true);
-      setCommandStatus(command, "sent. Controls may be limited for this player");
+      setCommandStatus(command, "sent");
       return;
     }
 
-    setCommandStatus(command, "not supported. Controls may be limited for this player");
+    setCommandStatus(command, "This video cannot be embedded.", true);
   }
 
   async function handleNativeVideoCommand(command, time) {
     const video = state.video;
     if (!video) {
-      setCommandStatus(command, "ignored. No active video", true);
+      setStatus("Ready to receive.");
       return;
     }
 
@@ -1275,7 +1303,7 @@
     } else if (mode === "dailymotion") {
       sendDailymotionCommand(command, time);
     } else {
-      setCommandStatus(command, "ignored. No active player", true);
+      setStatus("Ready to receive.");
     }
   }
 
@@ -1355,22 +1383,21 @@
     const rawCode =
       errorInfo && typeof errorInfo === "object" && "errorCode" in errorInfo ? errorInfo.errorCode : errorInfo;
     const numericCode = Number(rawCode);
-    const debug = Number.isFinite(numericCode) ? ` Details: YouTube error ${numericCode}.` : "";
     const liveLike = state.youtubeIsLive || !isPlayableDuration(state.youtubeDuration);
 
     if (liveLike && [101, 150].includes(numericCode)) {
-      return `This live stream may require YouTube sign-in or may not allow embeds.${debug}`;
+      return "This video cannot be embedded.";
     }
 
     if ([101, 150].includes(numericCode)) {
-      return `This YouTube video cannot be played in an embedded player.${debug}`;
+      return "This video cannot be embedded.";
     }
 
     if (liveLike || [2, 5, 100].includes(numericCode)) {
-      return `This live stream may be restricted or unavailable.${debug}`;
+      return "This video cannot be embedded.";
     }
 
-    return `This YouTube video cannot be played in an embedded player.${debug}`;
+    return "This video cannot be embedded.";
   }
 
   function handlePlayerMessage(event) {
@@ -1399,6 +1426,13 @@
         state.youtubePlaying = data.info.playerState === 1;
         if ([0, 1, 2].includes(data.info.playerState) && wasPlaying !== state.youtubePlaying) {
           setPlaybackActive(data.info.playerState === 1);
+          if (data.info.playerState === 1) {
+            setStatus("Casting video.");
+          } else if (data.info.playerState === 2) {
+            setStatus("Paused.");
+          } else if (data.info.playerState === 0) {
+            setStatus("Stopped.");
+          }
           publishPlaybackState(true);
         }
       }
@@ -1415,9 +1449,11 @@
     if (state.currentMode === "vimeo") {
       if (data.event === "play") {
         setPlaybackActive(true);
+        setStatus("Casting video.");
         publishPlaybackState(true);
       } else if (data.event === "pause" || data.event === "ended") {
         setPlaybackActive(false);
+        setStatus(data.event === "ended" ? "Stopped." : "Paused.");
         publishPlaybackState(true);
       } else if (data.method === "getCurrentTime" && typeof data.value === "number") {
         const nextTime =
@@ -1437,7 +1473,7 @@
         await executeCommand(payload);
       }
     } catch {
-      setStatus("Waiting for connection...");
+      setStatus("Ready to receive.");
     }
   }
 

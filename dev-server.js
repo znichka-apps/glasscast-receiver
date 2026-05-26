@@ -11,6 +11,7 @@ const TYPES = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
   ".txt": "text/plain; charset=utf-8",
 };
 
@@ -37,6 +38,23 @@ function serveFile(res, filePath) {
   });
 }
 
+function serveStatic(res, filePath) {
+  const resolved = path.resolve(ROOT, filePath);
+  const publicResolved = path.resolve(ROOT, "public", filePath);
+
+  if (fs.existsSync(resolved)) {
+    serveFile(res, filePath);
+    return;
+  }
+
+  if (publicResolved.startsWith(path.resolve(ROOT, "public")) && fs.existsSync(publicResolved)) {
+    serveFile(res, path.join("public", filePath));
+    return;
+  }
+
+  serveFile(res, filePath);
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
@@ -56,7 +74,7 @@ const server = http.createServer((req, res) => {
   }
 
   const filePath = url.pathname.replace(/^\/+/, "");
-  serveFile(res, filePath);
+  serveStatic(res, filePath);
 });
 
 server.listen(PORT, () => {
