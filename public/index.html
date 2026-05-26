@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=600, height=600, initial-scale=1.0">
+    <meta name="theme-color" content="#020516">
+    <title>GlassCast Receiver</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="display-page">
+    <main id="receiverShell" class="display-shell" aria-label="GlassCast Receiver">
+      <div id="receiverOverlay" class="receiver-overlay overlay-visible">
+        <header class="display-header">
+          <div class="brand-lockup" aria-label="GlassCast">
+            <img src="/brand/glasscast-logo-primary-transparent.png" alt="GlassCast">
+          </div>
+          <button id="showCodeButton" class="focusable secondary-button hidden" type="button">Show Code</button>
+        </header>
+
+        <section id="codeOverlay" class="code-overlay" aria-live="polite">
+          <p class="label">Session Code</p>
+          <div id="sessionCode" class="session-code">------</div>
+          <p class="overlay-help">Open the GlassCast app on your phone.</p>
+        </section>
+
+        <footer class="display-footer">
+          <div>
+            <p class="label">Receiver</p>
+            <p id="nowPlaying" class="now-playing">Ready for a video</p>
+          </div>
+          <p id="statusText" class="status-text" aria-live="polite">Ready to receive.</p>
+        </footer>
+      </div>
+
+      <section class="player-panel" aria-label="Player">
+        <div id="playerHost" class="player-host">
+          <div class="empty-state">
+            <p>Ready to receive.</p>
+            <span>Open the GlassCast app on your phone.</span>
+          </div>
+        </div>
+      </section>
+      <section id="tapToPlayOverlay" class="tap-play-overlay hidden" aria-live="polite">
+        <button
+          id="tapToPlayButton"
+          class="focusable tap-play-button"
+          type="button"
+          tabindex="0"
+          aria-label="Tap to Play"
+        >
+          <span class="tap-play-title">Tap to Play</span>
+          <span class="tap-play-help">Select this on your glasses to start the video.</span>
+        </button>
+        <p id="tapToPlayStatus" class="tap-play-status hidden"></p>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

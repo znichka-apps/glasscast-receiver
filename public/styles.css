@@ -1,0 +1,467 @@
+:root {
+  color-scheme: dark;
+  --bg: #020516;
+  --surface: #0c1326;
+  --surface-strong: #172653;
+  --line: rgba(142, 155, 194, 0.34);
+  --text: #e9eef9;
+  --muted: #8e9bc2;
+  --soft: #8e9bc2;
+  --accent: #32d17c;
+  --accent-strong: #7ef0b2;
+  --purple: #5a4fcf;
+  --gold: #f6d35c;
+  --danger: #ff7a7a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.display-page {
+  width: 600px;
+  height: 600px;
+  overflow: hidden;
+}
+
+.display-shell {
+  position: relative;
+  width: 600px;
+  height: 600px;
+  padding: 8px;
+  background: linear-gradient(180deg, #020516 0%, #071028 100%);
+  overflow: hidden;
+}
+
+.display-shell.has-video {
+  padding: 0;
+}
+
+.receiver-overlay {
+  position: absolute;
+  z-index: 6;
+  inset: 8px;
+  display: grid;
+  grid-template-rows: 92px 1fr 112px;
+  gap: 10px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 240ms ease;
+}
+
+.display-shell.has-video .receiver-overlay {
+  inset: 0;
+  padding: 8px;
+}
+
+.receiver-overlay.overlay-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.receiver-overlay.overlay-hidden .code-overlay {
+  position: static;
+}
+
+.display-header,
+.display-footer,
+.player-panel,
+.code-overlay {
+  background: rgba(17, 19, 24, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.display-header,
+.display-footer,
+.code-overlay {
+  background: rgba(12, 19, 38, 0.94);
+}
+
+.display-shell.has-video .display-header,
+.display-shell.has-video .display-footer {
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38);
+}
+
+.display-header {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.brand-lockup img {
+  display: block;
+  width: min(320px, 100%);
+  max-height: 54px;
+  object-fit: contain;
+}
+
+.prompt,
+.overlay-help,
+.status-text,
+.label {
+  color: var(--muted);
+}
+
+.prompt {
+  margin-top: 8px;
+  font-size: 16px;
+}
+
+.player-panel {
+  position: absolute;
+  z-index: 1;
+  top: 110px;
+  right: 8px;
+  bottom: 130px;
+  left: 8px;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(12, 19, 38, 0.78);
+}
+
+.display-shell.has-video .player-panel {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.player-host,
+.player-host video,
+.player-host iframe {
+  width: 100%;
+  height: 100%;
+}
+
+.player-host video,
+.player-host iframe {
+  display: block;
+  border: 0;
+  background: #020516;
+}
+
+.empty-state {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  padding: 28px;
+  text-align: center;
+}
+
+.empty-state p {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.empty-state span {
+  display: block;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 17px;
+}
+
+.display-footer {
+  grid-row: 3;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 16px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.now-playing {
+  margin-top: 5px;
+  max-width: 548px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-text {
+  color: var(--accent-strong);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.code-overlay {
+  position: absolute;
+  z-index: 7;
+  top: 108px;
+  left: 34px;
+  right: 34px;
+  padding: 24px 24px 26px;
+  text-align: center;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+
+.display-shell.has-video .code-overlay {
+  top: 106px;
+}
+
+.session-code {
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 84px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 26px rgba(50, 209, 124, 0.18);
+}
+
+.overlay-help {
+  margin-top: 12px;
+  font-size: 18px;
+}
+
+.focusable,
+.phone-card button,
+.primary-action {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-strong);
+}
+
+.focusable {
+  min-height: 48px;
+  padding: 0 16px;
+}
+
+.focusable:focus-visible,
+.phone-card button:focus-visible,
+.primary-action:focus-visible,
+input:focus,
+textarea:focus {
+  outline: 3px solid var(--accent-strong);
+  outline-offset: 3px;
+}
+
+.secondary-button {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.tap-play-overlay {
+  position: absolute;
+  z-index: 2147483647;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 18px;
+  place-items: center;
+  align-content: center;
+  padding: 42px;
+  background: rgba(0, 0, 0, 0.72);
+  pointer-events: auto;
+}
+
+.tap-play-button {
+  display: grid;
+  place-items: center;
+  width: min(100%, 480px);
+  min-height: 220px;
+  padding: 28px 30px;
+  border-color: var(--accent);
+  background: #0c1326;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.58);
+  text-align: center;
+}
+
+.tap-play-button:focus,
+.tap-play-button:focus-visible {
+  outline: 5px solid var(--accent-strong);
+  outline-offset: 6px;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 10px rgba(34, 211, 238, 0.24), 0 18px 60px rgba(0, 0, 0, 0.58);
+}
+
+.tap-play-title {
+  font-size: 54px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.tap-play-help {
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.tap-play-status {
+  max-width: 480px;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.phone-page {
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.phone-shell {
+  width: min(100%, 560px);
+  margin: 0 auto;
+  padding: 22px 16px 34px;
+}
+
+.phone-header {
+  margin-bottom: 18px;
+}
+
+.phone-logo {
+  display: block;
+  width: min(280px, 82vw);
+  height: auto;
+}
+
+.phone-header h1 {
+  margin-top: 14px;
+  font-size: 34px;
+  line-height: 1.08;
+}
+
+.phone-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.phone-card label {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: #070b18;
+}
+
+input {
+  height: 54px;
+  padding: 0 14px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+textarea {
+  min-height: 104px;
+  padding: 12px 14px;
+  resize: vertical;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.primary-action {
+  min-height: 58px;
+  border-color: var(--accent);
+  background: #103927;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.helper-text {
+  display: grid;
+  gap: 6px;
+  color: var(--soft);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.control-grid button {
+  min-height: 56px;
+  padding: 0 10px;
+  font-weight: 800;
+}
+
+.control-grid button:last-child {
+  grid-column: 1 / -1;
+}
+
+.phone-status {
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.phone-status.error,
+.status-text.error {
+  color: var(--danger);
+}
+
+@media (max-width: 420px) {
+  .phone-shell {
+    padding-inline: 12px;
+  }
+
+  .phone-header h1 {
+    font-size: 30px;
+  }
+}
