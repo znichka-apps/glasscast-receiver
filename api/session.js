@@ -1,8 +1,11 @@
 const sessions = globalThis.__glasscastSessions || new Map();
 globalThis.__glasscastSessions = sessions;
+globalThis.__glasscastLastPruneMs = globalThis.__glasscastLastPruneMs || 0;
 
 const COMMANDS = new Set(["playPause", "play", "pause", "seekBack", "seekForward", "seekTo", "stop", "fullscreen"]);
 const MODES = new Set(["native-video", "youtube", "vimeo", "dailymotion", "unsupported", "idle"]);
+const SESSION_TTL_MS = 30 * 60 * 1000;
+const PRUNE_INTERVAL_MS = 60 * 1000;
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -40,6 +43,74 @@ function cleanCode(value) {
   return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
 }
 
+function nowMs() {
+  return Date.now();
+}
+
+function isExpired(session, now) {
+  return !session || !Number.isFinite(session.expiresAt) || session.expiresAt <= now;
+}
+
+function pruneExpiredSessions() {
+  const now = nowMs();
+  if (now - globalThis.__glasscastLastPruneMs < PRUNE_INTERVAL_MS) {
+    return;
+  }
+
+  globalThis.__glasscastLastPruneMs = now;
+  for (const [code, session] of sessions.entries()) {
+    if (isExpired(session, now)) {
+      sessions.delete(code);
+    }
+  }
+}
+
+function getActiveSession(code) {
+  const session = sessions.get(code);
+  const now = nowMs();
+  if (isExpired(session, now)) {
+    sessions.delete(code);
+    return null;
+  }
+  return session;
+}
+
+function writeSession(code, session) {
+  const updatedAt = nowMs();
+  const nextSession = {
+    ...session,
+    updatedAt,
+    expiresAt: updatedAt + SESSION_TTL_MS,
+  };
+  sessions.set(code, nextSession);
+  return nextSession;
+}
+
+function mergeSession(code, patch) {
+  const latest = getActiveSession(code) || {};
+  return writeSession(code, { ...latest, ...patch });
+}
+
+function cleanVideoUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) {
+    return { error: "Missing video URL." };
+  }
+  if (url.length > 2000) {
+    return { error: "Video URL is too long." };
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { error: "Video URL must use http or https." };
+    }
+    return { url };
+  } catch {
+    return { error: "Invalid video URL." };
+  }
+}
+
 function commandId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -57,7 +128,7 @@ function cleanState(value) {
   const input = value && typeof value === "object" ? value : {};
   const mode = MODES.has(input.mode) ? input.mode : "idle";
   const title = String(input.title || "").trim();
-  const url = String(input.url || "").trim();
+  const cleanedUrl = cleanVideoUrl(input.url);
   const state = {
     currentTime: seconds(input.currentTime),
     duration: seconds(input.duration),
@@ -74,14 +145,18 @@ function cleanState(value) {
   if (title) {
     state.title = title.slice(0, 300);
   }
-  if (url) {
-    state.url = url.slice(0, 2000);
+  if (cleanedUrl.url) {
+    state.url = cleanedUrl.url;
   }
 
   return state;
 }
 
 module.exports = async function handler(req, res) {
+  // Sessions are in-memory only and expire after inactivity.
+  // Cleanup is opportunistic because serverless functions may not keep timers alive.
+  pruneExpiredSessions();
+
   if (req.method === "GET") {
     const requestUrl = new URL(req.url, "http://localhost");
     const code = cleanCode(requestUrl.searchParams.get("code"));
@@ -90,7 +165,7 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    const latest = sessions.get(code);
+    const latest = getActiveSession(code);
     if (!latest) {
       json(res, 200, { ok: true, empty: true });
       return;
@@ -126,14 +201,13 @@ module.exports = async function handler(req, res) {
     }
 
     if (body.type === "cast") {
-      const url = String(body.url || "").trim();
-      if (!url) {
-        json(res, 400, { ok: false, error: "Missing video URL." });
+      const cleaned = cleanVideoUrl(body.url);
+      if (cleaned.error) {
+        json(res, 400, { ok: false, error: cleaned.error });
         return;
       }
-      const payload = commandPayload({ type: "cast", url });
-      const latest = sessions.get(code) || {};
-      sessions.set(code, { ...latest, command: payload });
+      const payload = commandPayload({ type: "cast", url: cleaned.url });
+      mergeSession(code, { command: payload });
       json(res, 200, { ok: true, commandId: payload.commandId, createdAt: payload.createdAt });
       return;
     }
@@ -148,8 +222,7 @@ module.exports = async function handler(req, res) {
       if (command === "seekTo") {
         payload.time = seconds(body.time);
       }
-      const latest = sessions.get(code) || {};
-      sessions.set(code, { ...latest, command: payload });
+      mergeSession(code, { command: payload });
       json(res, 200, { ok: true, commandId: payload.commandId, createdAt: payload.createdAt });
       return;
     }
@@ -160,10 +233,14 @@ module.exports = async function handler(req, res) {
         json(res, 400, { ok: false, error: "Missing commandId." });
         return;
       }
-      const latest = sessions.get(code) || {};
+      const latest = getActiveSession(code);
+      if (!latest) {
+        json(res, 200, { ok: true, cleared: false });
+        return;
+      }
       if (latest.command?.commandId === acknowledgedCommandId) {
         const { command, ...rest } = latest;
-        sessions.set(code, rest);
+        writeSession(code, rest);
         json(res, 200, { ok: true, cleared: true });
         return;
       }
@@ -172,9 +249,14 @@ module.exports = async function handler(req, res) {
     }
 
     if (body.type === "state") {
-      const latest = sessions.get(code) || {};
-      sessions.set(code, { ...latest, state: cleanState(body.state), stateUpdatedAt: Date.now() });
+      mergeSession(code, { state: cleanState(body.state), stateUpdatedAt: nowMs() });
       json(res, 200, { ok: true });
+      return;
+    }
+
+    if (body.type === "clear") {
+      sessions.delete(code);
+      json(res, 200, { ok: true, cleared: true });
       return;
     }
 
