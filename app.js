@@ -754,8 +754,8 @@
     if (state.currentMode !== "youtube" || !state.iframe) {
       return false;
     }
-    state.youtubeCaptionOptionsRequest = "modules";
-    return postToYoutube("getOptions");
+    state.youtubeCaptionOptionsRequest = "captions";
+    return postToYoutube("getOptions", ["captions"]);
   }
 
   function finishYoutubeCaptionCommand(available, enabled) {
@@ -769,27 +769,41 @@
   }
 
   function handleYoutubeCaptionOptions(options) {
-    if (state.youtubeCaptionOptionsRequest === "captions") {
-      state.youtubeCaptionOptionsRequest = null;
-      return;
-    }
-
-    if (state.youtubeCaptionOptionsRequest !== "modules") {
+    if (state.youtubeCaptionOptionsRequest !== "captions") {
       return;
     }
 
     state.youtubeCaptionOptionsRequest = null;
-    const captionsLoaded = options.includes("captions");
-    const captionsAvailable = captionsLoaded || state.captionsAvailable;
+    const captionsAvailable = options.length > 0;
     state.captionsAvailable = captionsAvailable;
-    state.captionsEnabled = captionsLoaded;
+    state.captionsEnabled = false;
+    logger.debug("YouTube captions module available?", captionsAvailable);
+    logger.debug("YouTube available caption options?", options);
+    logger.debug("YouTube current caption state?", { enabled: false, trackSupported: options.includes("track") });
 
-    if (captionsLoaded) {
-      state.youtubeCaptionOptionsRequest = "captions";
-      postToYoutube("getOptions", ["captions"]);
+    if (captionsAvailable && options.includes("track")) {
+      state.youtubeCaptionOptionsRequest = "track";
+      postToYoutube("getOption", ["captions", "track"]);
+      publishPlaybackState(true);
+      return;
     }
 
-    finishYoutubeCaptionCommand(captionsAvailable, captionsLoaded);
+    finishYoutubeCaptionCommand(captionsAvailable, false);
+    publishPlaybackState(true);
+  }
+
+  function handleYoutubeCaptionTrack(track) {
+    if (state.youtubeCaptionOptionsRequest !== "track") {
+      return;
+    }
+    state.youtubeCaptionOptionsRequest = null;
+    const captionsEnabled = Boolean(track && typeof track === "object" && Object.keys(track).length > 0);
+    state.captionsEnabled = state.captionsAvailable && captionsEnabled;
+    logger.debug("YouTube current caption state?", {
+      enabled: state.captionsEnabled,
+      track: state.captionsEnabled ? "selected" : "none",
+    });
+    finishYoutubeCaptionCommand(state.captionsAvailable, state.captionsEnabled);
     publishPlaybackState(true);
   }
 
@@ -802,9 +816,8 @@
     state.captionCommandTimer = window.setTimeout(() => {
       if (state.captionCommandPending === enable) {
         state.captionCommandPending = null;
-        requestYoutubeCaptionState();
         if (enable) {
-          setCaptionStatus(false, false, "Captions unavailable for this video.");
+          setCaptionStatus(state.captionsAvailable, state.captionsEnabled);
         } else {
           setCaptionStatus(state.captionsAvailable, false);
         }
@@ -1095,7 +1108,6 @@
       if (media.mode === "youtube") {
         state.iframe?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: iframe.id }), "*");
         requestPlayerState();
-        requestYoutubeCaptionState();
       } else if (media.mode === "vimeo") {
         postObjectToIframe({ method: "getTextTracks" });
         postObjectToIframe({ method: "addEventListener", value: "texttrackchange" });
@@ -1692,6 +1704,9 @@
     if (state.currentMode === "youtube" && data.event === "infoDelivery" && data.info) {
       if (Array.isArray(data.info.options)) {
         handleYoutubeCaptionOptions(data.info.options);
+      }
+      if (Object.prototype.hasOwnProperty.call(data.info, "captionTrack")) {
+        handleYoutubeCaptionTrack(data.info.captionTrack);
       }
       if (typeof data.info.currentTime === "number") {
         state.youtubeCurrentTime = data.info.currentTime;
