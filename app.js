@@ -77,6 +77,7 @@
     captionsEnabled: false,
     captionCommandPending: null,
     captionCommandTimer: null,
+    youtubeCaptionOptionsRequest: null,
     overlayVisible: true,
     isPlaying: false,
     overlayHideTimer: null,
@@ -676,6 +677,7 @@
     state.captionsAvailable = false;
     state.captionsEnabled = false;
     state.captionCommandPending = null;
+    state.youtubeCaptionOptionsRequest = null;
     if (state.captionCommandTimer) {
       window.clearTimeout(state.captionCommandTimer);
       state.captionCommandTimer = null;
@@ -748,6 +750,49 @@
     }
   }
 
+  function requestYoutubeCaptionState() {
+    if (state.currentMode !== "youtube" || !state.iframe) {
+      return false;
+    }
+    state.youtubeCaptionOptionsRequest = "modules";
+    return postToYoutube("getOptions");
+  }
+
+  function finishYoutubeCaptionCommand(available, enabled) {
+    const pending = state.captionCommandPending;
+    if (pending === null || pending !== enabled) {
+      return;
+    }
+    clearCaptionCommandTimer();
+    state.captionCommandPending = null;
+    setCaptionStatus(available, enabled);
+  }
+
+  function handleYoutubeCaptionOptions(options) {
+    if (state.youtubeCaptionOptionsRequest === "captions") {
+      state.youtubeCaptionOptionsRequest = null;
+      return;
+    }
+
+    if (state.youtubeCaptionOptionsRequest !== "modules") {
+      return;
+    }
+
+    state.youtubeCaptionOptionsRequest = null;
+    const captionsLoaded = options.includes("captions");
+    const captionsAvailable = captionsLoaded || state.captionsAvailable;
+    state.captionsAvailable = captionsAvailable;
+    state.captionsEnabled = captionsLoaded;
+
+    if (captionsLoaded) {
+      state.youtubeCaptionOptionsRequest = "captions";
+      postToYoutube("getOptions", ["captions"]);
+    }
+
+    finishYoutubeCaptionCommand(captionsAvailable, captionsLoaded);
+    publishPlaybackState(true);
+  }
+
   function handleYoutubeCaptionCommand(command) {
     const enable = command === "captionsOn" || (command === "toggleCaptions" && !state.captionsEnabled);
     clearCaptionCommandTimer();
@@ -757,7 +802,12 @@
     state.captionCommandTimer = window.setTimeout(() => {
       if (state.captionCommandPending === enable) {
         state.captionCommandPending = null;
-        setCaptionStatus(false, false, "Captions unavailable for this video.");
+        requestYoutubeCaptionState();
+        if (enable) {
+          setCaptionStatus(false, false, "Captions unavailable for this video.");
+        } else {
+          setCaptionStatus(state.captionsAvailable, false);
+        }
       }
     }, 1500);
   }
@@ -1045,6 +1095,7 @@
       if (media.mode === "youtube") {
         state.iframe?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: iframe.id }), "*");
         requestPlayerState();
+        requestYoutubeCaptionState();
       } else if (media.mode === "vimeo") {
         postObjectToIframe({ method: "getTextTracks" });
         postObjectToIframe({ method: "addEventListener", value: "texttrackchange" });
@@ -1639,6 +1690,9 @@
     }
 
     if (state.currentMode === "youtube" && data.event === "infoDelivery" && data.info) {
+      if (Array.isArray(data.info.options)) {
+        handleYoutubeCaptionOptions(data.info.options);
+      }
       if (typeof data.info.currentTime === "number") {
         state.youtubeCurrentTime = data.info.currentTime;
       }
@@ -1670,14 +1724,7 @@
     }
 
     if (state.currentMode === "youtube" && data.event === "onApiChange") {
-      const pending = state.captionCommandPending;
-      clearCaptionCommandTimer();
-      state.captionCommandPending = null;
-      if (pending === false) {
-        setCaptionStatus(true, false);
-      } else {
-        setCaptionStatus(true, true);
-      }
+      requestYoutubeCaptionState();
     }
 
     if (state.currentMode === "youtube" && data.event === "onError") {
@@ -1696,19 +1743,19 @@
       if (data.method === "getTextTracks" && Array.isArray(data.value)) {
         state.captionTracks = data.value.filter((track) => ["captions", "subtitles"].includes(track.kind));
         state.captionsAvailable = state.captionTracks.length > 0;
-        state.captionsEnabled = state.captionTracks.some((track) => Boolean(track.active));
+        state.captionsEnabled = state.captionTracks.some((track) => track.mode === "showing");
         publishPlaybackState(true);
       } else if (data.method === "enableTextTrack" && state.captionCommandPending === true) {
         clearCaptionCommandTimer();
         state.captionCommandPending = null;
-        setCaptionStatus(true, true);
+        setCaptionStatus(true, data.value?.mode === "showing");
       } else if (data.method === "disableTextTrack" && state.captionCommandPending === false) {
         clearCaptionCommandTimer();
         state.captionCommandPending = null;
         setCaptionStatus(state.captionTracks.length > 0, false);
       } else if (data.event === "texttrackchange") {
         const track = data.data || data.value || {};
-        state.captionsEnabled = Boolean(track.language);
+        state.captionsEnabled = track.mode === "showing";
         if (state.captionsEnabled) {
           state.captionsAvailable = true;
         }
