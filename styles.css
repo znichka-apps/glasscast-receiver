@@ -1,12 +1,12 @@
 :root {
   color-scheme: dark;
-  --bg: #020516;
+  --bg: #000000;
   --surface: #0c1326;
   --surface-strong: #172653;
   --line: rgba(142, 155, 194, 0.34);
   --text: #e9eef9;
-  --muted: #8e9bc2;
-  --soft: #8e9bc2;
+  --muted: #c8d0e8;
+  --soft: #c8d0e8;
   --accent: #32d17c;
   --accent-strong: #7ef0b2;
   --purple: #5a4fcf;
@@ -44,7 +44,7 @@ textarea {
   width: 600px;
   height: 600px;
   padding: 8px;
-  background: linear-gradient(180deg, #020516 0%, #071028 100%);
+  background: #000000;
   overflow: hidden;
 }
 
@@ -57,11 +57,11 @@ textarea {
   z-index: 6;
   inset: 8px;
   display: grid;
-  grid-template-rows: 92px 1fr 112px;
+  grid-template-rows: 84px 1fr 148px;
   gap: 10px;
   opacity: 1;
   pointer-events: auto;
-  transition: opacity 240ms ease;
+  transition: opacity 160ms ease;
 }
 
 .display-shell.has-video .receiver-overlay {
@@ -90,7 +90,7 @@ textarea {
 .display-header,
 .display-footer,
 .code-overlay {
-  background: rgba(12, 19, 38, 0.94);
+  background: #10182b;
 }
 
 .display-shell.has-video .display-header,
@@ -141,7 +141,7 @@ p {
   z-index: 1;
   top: 110px;
   right: 8px;
-  bottom: 130px;
+  bottom: 166px;
   left: 8px;
   min-height: 0;
   overflow: hidden;
@@ -193,12 +193,12 @@ p {
   grid-row: 3;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
-  padding: 16px;
+  gap: 5px;
+  padding: 14px 18px;
 }
 
 .label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -223,13 +223,20 @@ p {
   line-height: 1.25;
 }
 
+.controls-status {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
 .code-overlay {
   position: absolute;
   z-index: 7;
   top: 108px;
   left: 34px;
   right: 34px;
-  padding: 24px 24px 26px;
+  padding: 22px 28px 24px;
   text-align: center;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
 }
@@ -241,7 +248,7 @@ p {
 .session-code {
   margin-top: 8px;
   color: var(--accent);
-  font-size: 84px;
+  font-size: 92px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0.08em;
@@ -249,8 +256,18 @@ p {
 }
 
 .overlay-help {
-  margin-top: 12px;
-  font-size: 18px;
+  margin-top: 10px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.state-title {
+  max-width: 480px;
+  margin: 14px auto 0;
+  color: #ffffff;
+  font-size: 25px;
+  font-weight: 800;
+  line-height: 1.16;
 }
 
 .focusable,
@@ -263,8 +280,9 @@ p {
 }
 
 .focusable {
-  min-height: 48px;
-  padding: 0 16px;
+  min-height: 72px;
+  padding: 0 24px;
+  cursor: pointer;
 }
 
 .focusable:focus-visible,
@@ -272,13 +290,24 @@ p {
 .primary-action:focus-visible,
 input:focus,
 textarea:focus {
-  outline: 3px solid var(--accent-strong);
-  outline-offset: 3px;
+  outline: 5px solid #ffffff;
+  outline-offset: 4px;
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.55);
 }
 
 .secondary-button {
-  font-size: 15px;
+  min-height: 60px;
+  font-size: 17px;
   font-weight: 700;
+}
+
+.primary-button {
+  min-width: 260px;
+  margin: 18px auto 0;
+  border-color: var(--accent);
+  background: #123c2a;
+  font-size: 19px;
+  font-weight: 800;
 }
 
 .tap-play-overlay {
@@ -299,7 +328,7 @@ textarea:focus {
   display: grid;
   place-items: center;
   width: min(100%, 480px);
-  min-height: 220px;
+  min-height: 240px;
   padding: 28px 30px;
   border-color: var(--accent);
   background: #0c1326;
@@ -323,7 +352,7 @@ textarea:focus {
 
 .tap-play-help {
   max-width: 360px;
-  color: var(--muted);
+  color: #e4e6eb;
   font-size: 20px;
   font-weight: 700;
   line-height: 1.25;
@@ -340,6 +369,17 @@ textarea:focus {
 
 .hidden {
   display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 .phone-page {

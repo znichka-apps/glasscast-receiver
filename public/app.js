@@ -6,8 +6,32 @@
   const PROCESSED_COMMANDS_KEY = "glasscast.processedCommandIds.v1";
   const ENABLE_LOCAL_VIDEO_EXPERIMENT = false;
   const LOCAL_MUTED_AUTOPLAY_FALLBACK = true;
-  const UNSUPPORTED_MESSAGE =
-    "This link is not supported yet. Try a YouTube link or supported video URL.";
+  const SESSION_TTL_MS = 30 * 60 * 1000;
+  const UNSUPPORTED_MESSAGE = "This source cannot play on GlassCast";
+
+  const IS_LOCAL_DEVELOPMENT = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  // Do not log raw video URLs, session codes, request bodies, or playback payloads in production.
+  const logger = {
+    debug(message, details) {
+      if (IS_LOCAL_DEVELOPMENT) {
+        console.debug(`[GlassCast] ${message}`, details === undefined ? "" : details);
+      }
+    },
+    info(message, details) {
+      if (IS_LOCAL_DEVELOPMENT && details !== undefined) {
+        console.info(`[GlassCast] ${message}`, details);
+        return;
+      }
+      console.info(`[GlassCast] ${message}`);
+    },
+    warn(message, details) {
+      if (IS_LOCAL_DEVELOPMENT && details !== undefined) {
+        console.warn(`[GlassCast] ${message}`, details);
+        return;
+      }
+      console.warn(`[GlassCast] ${message}`);
+    },
+  };
 
   const els = {
     shell: document.getElementById("receiverShell"),
@@ -21,6 +45,11 @@
     tapToPlayStatus: document.getElementById("tapToPlayStatus"),
     nowPlaying: document.getElementById("nowPlaying"),
     status: document.getElementById("statusText"),
+    controlsStatus: document.getElementById("controlsStatus"),
+    stateEyebrow: document.getElementById("stateEyebrow"),
+    stateTitle: document.getElementById("stateTitle"),
+    stateHelp: document.getElementById("stateHelp"),
+    retry: document.getElementById("retryButton"),
   };
 
   const state = {
@@ -43,6 +72,11 @@
     nativeVideoIsLocal: false,
     nativePlaybackStarted: false,
     nativeVideoReadyForTap: false,
+    captionTracks: [],
+    captionsAvailable: false,
+    captionsEnabled: false,
+    captionCommandPending: null,
+    captionCommandTimer: null,
     overlayVisible: true,
     isPlaying: false,
     overlayHideTimer: null,
@@ -53,6 +87,10 @@
     statePublishInFlight: false,
     pollTimer: null,
     castLoadId: 0,
+    connected: false,
+    lastSessionActivityAt: 0,
+    pollFailures: 0,
+    sessionExpired: false,
   };
   state.processedCommandSet = new Set(state.processedCommandIds);
 
@@ -74,6 +112,37 @@
     } else if (state.isPlaying) {
       scheduleOverlayHide();
     }
+  }
+
+  function setReceiverState(kind) {
+    const states = {
+      waiting: ["Waiting for phone", "Open GlassCast on your phone and enter this code", "Keep this screen open."],
+      connected: ["Connected", "Ready to cast", "Choose a video on your phone."],
+      loading: ["Connected", "Loading video...", "This may take a moment."],
+      unsupported: ["Unsupported video", UNSUPPORTED_MESSAGE, "Try a YouTube, Vimeo, Dailymotion, or direct video link."],
+      expired: ["Session expired", "This session expired. Reopen GlassCast to get a new code.", ""],
+      network: ["Connection problem", "Cannot reach GlassCast right now", "Check your connection, then retry."],
+    };
+    const copy = states[kind] || states.waiting;
+    els.stateEyebrow.textContent = copy[0];
+    els.stateTitle.textContent = copy[1];
+    els.stateHelp.textContent = copy[2];
+    els.code.classList.toggle("hidden", ["expired", "network", "unsupported"].includes(kind));
+    els.retry.classList.toggle("hidden", kind !== "network");
+    els.shell.dataset.receiverState = kind;
+    showCodeOverlay(true);
+    showOverlay();
+  }
+
+  function updateControlsStatus() {
+    if (!state.video && !state.iframe) {
+      els.controlsStatus.textContent = "Controls available when video starts";
+      return;
+    }
+    const playback = getPlaybackState();
+    els.controlsStatus.textContent = playback.canSeek
+      ? "Enter: play/pause  ·  Left/Right: seek 10s  ·  Back: exit"
+      : "Enter: play/pause  ·  Timeline unavailable  ·  Back: exit";
   }
 
   function setNowPlaying(text) {
@@ -183,6 +252,7 @@
     } else {
       showOverlay();
     }
+    updateControlsStatus();
   }
 
   function finiteSeconds(value) {
@@ -239,9 +309,9 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: state.code, type: "ack", commandId }),
       });
-      console.info("[GlassCast] command acknowledged", { commandId });
+      logger.debug("command acknowledged", { commandId });
     } catch (error) {
-      console.warn("[GlassCast] command acknowledgement failed", { commandId, error });
+      logger.warn("command acknowledgement failed", { commandId, error });
     }
   }
 
@@ -257,6 +327,8 @@
         canSeek: true,
         timelineAvailable: true,
         controlsLimited: false,
+        captionsAvailable: state.captionsAvailable,
+        captionsEnabled: state.captionsEnabled,
       };
     }
 
@@ -272,6 +344,8 @@
         canSeek: hasTimeline,
         timelineAvailable: hasTimeline,
         controlsLimited: false,
+        captionsAvailable: state.captionsAvailable,
+        captionsEnabled: state.captionsEnabled,
       };
     }
 
@@ -286,6 +360,8 @@
         canSeek: true,
         timelineAvailable: true,
         controlsLimited: true,
+        captionsAvailable: state.captionsAvailable,
+        captionsEnabled: state.captionsEnabled,
       };
     }
 
@@ -300,6 +376,8 @@
         canSeek: false,
         timelineAvailable: false,
         controlsLimited: true,
+        captionsAvailable: false,
+        captionsEnabled: false,
       };
     }
 
@@ -313,6 +391,8 @@
       canSeek: false,
       timelineAvailable: false,
       controlsLimited: false,
+      captionsAvailable: false,
+      captionsEnabled: false,
     };
   }
 
@@ -341,11 +421,14 @@
     state.lastStatePublishAt = now;
     state.statePublishInFlight = true;
     try {
-      await fetch("/api/session", {
+      const response = await fetch("/api/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: state.code, type: "state", state: getPlaybackState() }),
       });
+      if (response.ok && state.connected) {
+        state.lastSessionActivityAt = Date.now();
+      }
     } catch {
       // State updates are advisory; command polling remains the user-visible connection signal.
     } finally {
@@ -435,7 +518,7 @@
 
   function resolveMediaUrl(input) {
     const originalUrl = String(input || "").trim();
-    console.info("[GlassCast] resolveMediaUrl called", { url: originalUrl });
+    logger.debug("media URL resolution started", { url: originalUrl });
     const base = {
       mode: "unsupported",
       originalUrl,
@@ -462,7 +545,7 @@
 
     if (directVideoPattern.test(url.href) || (ENABLE_LOCAL_VIDEO_EXPERIMENT && localNetworkVideo)) {
       if (localNetworkVideo) {
-        console.info("Resolved local video server URL", { url: originalUrl });
+        logger.debug("local video URL resolved", { url: originalUrl });
       }
       return {
         mode: "native-video",
@@ -569,7 +652,7 @@
   }
 
   function clearPlayer() {
-    console.info("[GlassCast] player clear/load reset called", { mode: state.currentMode, url: state.mediaUrl });
+    logger.debug("player cleared", { mode: state.currentMode, url: state.mediaUrl });
     clearOverlayHideTimer();
     clearStatePublishTimer();
     els.tapToPlayOverlay.classList.add("hidden");
@@ -589,11 +672,136 @@
     state.nativeVideoIsLocal = false;
     state.nativePlaybackStarted = false;
     state.nativeVideoReadyForTap = false;
+    state.captionTracks = [];
+    state.captionsAvailable = false;
+    state.captionsEnabled = false;
+    state.captionCommandPending = null;
+    if (state.captionCommandTimer) {
+      window.clearTimeout(state.captionCommandTimer);
+      state.captionCommandTimer = null;
+    }
     state.isPlaying = false;
     els.shell.classList.remove("has-video", "has-critical-status");
     els.overlay.classList.remove("overlay-hidden");
     els.overlay.classList.add("overlay-visible");
     publishPlaybackState(true);
+    updateControlsStatus();
+  }
+
+  function failActivePlayer(message) {
+    state.castLoadId += 1;
+    clearPlayer();
+    state.currentMode = "unsupported";
+    state.mediaTitle = "";
+    state.mediaUrl = "";
+    renderEmpty("Unsupported video", message || UNSUPPORTED_MESSAGE);
+    setNowPlaying("Ready for a video");
+    setStatus(message || UNSUPPORTED_MESSAGE, true);
+    setReceiverState("unsupported");
+    updateControlsStatus();
+    publishPlaybackState(true);
+  }
+
+  function isCaptionCommand(command) {
+    return ["captionsOn", "captionsOff", "toggleCaptions"].includes(command);
+  }
+
+  function setCaptionStatus(available, enabled, message) {
+    state.captionsAvailable = Boolean(available);
+    state.captionsEnabled = Boolean(available && enabled);
+    setStatus(message || (state.captionsEnabled ? "Captions on." : "Captions off."), !available);
+    publishPlaybackState(true);
+  }
+
+  function syncNativeCaptionState() {
+    if (!state.video) {
+      state.captionTracks = [];
+      state.captionsAvailable = false;
+      state.captionsEnabled = false;
+      return;
+    }
+    state.captionTracks = Array.from(state.video.textTracks || []).filter((track) =>
+      ["captions", "subtitles"].includes(track.kind),
+    );
+    state.captionsAvailable = state.captionTracks.length > 0;
+    state.captionsEnabled = state.captionTracks.some((track) => track.mode === "showing");
+  }
+
+  function handleNativeCaptionCommand(command) {
+    syncNativeCaptionState();
+    if (!state.captionsAvailable) {
+      setCaptionStatus(false, false, "Captions unavailable for this video.");
+      return;
+    }
+    const enable = command === "captionsOn" || (command === "toggleCaptions" && !state.captionsEnabled);
+    state.captionTracks.forEach((track, index) => {
+      track.mode = enable && index === 0 ? "showing" : "disabled";
+    });
+    syncNativeCaptionState();
+    setCaptionStatus(true, state.captionsEnabled);
+  }
+
+  function clearCaptionCommandTimer() {
+    if (state.captionCommandTimer) {
+      window.clearTimeout(state.captionCommandTimer);
+      state.captionCommandTimer = null;
+    }
+  }
+
+  function handleYoutubeCaptionCommand(command) {
+    const enable = command === "captionsOn" || (command === "toggleCaptions" && !state.captionsEnabled);
+    clearCaptionCommandTimer();
+    state.captionCommandPending = enable;
+    postToYoutube(enable ? "loadModule" : "unloadModule", ["captions"]);
+    setStatus("Changing captions...");
+    state.captionCommandTimer = window.setTimeout(() => {
+      if (state.captionCommandPending === enable) {
+        state.captionCommandPending = null;
+        setCaptionStatus(false, false, "Captions unavailable for this video.");
+      }
+    }, 1500);
+  }
+
+  function handleVimeoCaptionCommand(command) {
+    if (!state.captionsAvailable || !state.captionTracks.length) {
+      setCaptionStatus(false, false, "Captions unavailable for this video.");
+      return;
+    }
+    const enable = command === "captionsOn" || (command === "toggleCaptions" && !state.captionsEnabled);
+    clearCaptionCommandTimer();
+    state.captionCommandPending = enable;
+    if (enable) {
+      const track = state.captionTracks[0];
+      postObjectToIframe({
+        method: "enableTextTrack",
+        value: { language: track.language, kind: track.kind || "captions" },
+      });
+    } else {
+      postObjectToIframe({ method: "disableTextTrack" });
+    }
+    setStatus("Changing captions...");
+    state.captionCommandTimer = window.setTimeout(() => {
+      if (state.captionCommandPending === enable) {
+        state.captionCommandPending = null;
+        setCaptionStatus(false, false, "Captions unavailable for this video.");
+      }
+    }, 1500);
+  }
+
+  function handleCaptionCommand(command) {
+    if (!isCaptionCommand(command)) {
+      return false;
+    }
+    if (state.video && state.currentMode === "native-video") {
+      handleNativeCaptionCommand(command);
+    } else if (state.iframe && state.currentMode === "youtube") {
+      handleYoutubeCaptionCommand(command);
+    } else if (state.iframe && state.currentMode === "vimeo") {
+      handleVimeoCaptionCommand(command);
+    } else {
+      setCaptionStatus(false, false, "Captions unavailable for this player.");
+    }
+    return true;
   }
 
   function showTapToPlay(message, isError) {
@@ -610,7 +818,7 @@
     showOverlay();
     refreshFocusableElements();
     focusTapToPlay();
-    console.info("[GlassCast] Tap to Play focused");
+    logger.debug("Tap to Play focused");
     window.requestAnimationFrame(() => {
       focusTapToPlay();
     });
@@ -628,7 +836,7 @@
   }
 
   function logPlayFailure(source, error) {
-    console.info("[GlassCast] play failure", {
+    logger.debug("play failure", {
       source,
       name: error?.name || "",
       message: error?.message || "",
@@ -659,7 +867,7 @@
   async function checkLocalVideoReachability(playerUrl) {
     const healthUrl = getLocalVideoHealthUrl(playerUrl);
     if (!healthUrl) {
-      console.info("[GlassCast] local health check failure", { url: playerUrl, reason: "invalid-health-url" });
+      logger.debug("local video health check failed", { url: playerUrl, reason: "invalid-health-url" });
       return { ok: false, blocked: false };
     }
 
@@ -669,7 +877,7 @@
         cache: "no-store",
         targetAddressSpace: "local",
       });
-      console.info(`[GlassCast] local health check ${response.ok ? "success" : "failure"}`, {
+      logger.debug(`local video health check ${response.ok ? "succeeded" : "failed"}`, {
         healthUrl,
         status: response.status,
         ok: response.ok,
@@ -679,7 +887,7 @@
       const blocked =
         isLocalNetworkAccessBlocked(error) ||
         (window.isSecureContext && window.location.protocol === "https:" && healthUrl.startsWith("http://"));
-      console.info("[GlassCast] local health check failure", {
+      logger.debug("local video health check failed", {
         healthUrl,
         blocked,
         name: error?.name || "",
@@ -690,21 +898,26 @@
   }
 
   async function castVideo(url) {
-    console.info("[GlassCast] player render/load called", { url });
+    logger.info("cast received", { url });
     const media = resolveMediaUrl(url);
-    console.info("[GlassCast] new cast received", { url, mode: media.mode, playerUrl: media.playerUrl });
+    logger.info(`player mode resolved: ${media.mode}`, { url, playerUrl: media.playerUrl });
     const castLoadId = state.castLoadId + 1;
     state.castLoadId = castLoadId;
     clearPlayer();
+    state.connected = true;
+    state.lastSessionActivityAt = Date.now();
+    state.sessionExpired = false;
 
     if (media.mode === "unsupported") {
+      logger.warn("unsupported link", { url: media.originalUrl });
       state.currentMode = "unsupported";
       state.mediaTitle = "";
       state.mediaUrl = media.originalUrl;
       publishPlaybackState(true);
-      renderEmpty("Unsupported link", media.reason);
+      renderEmpty("Unsupported video", UNSUPPORTED_MESSAGE);
       setNowPlaying("Ready for a video");
-      setStatus(media.reason, true);
+      setStatus(UNSUPPORTED_MESSAGE, true);
+      setReceiverState("unsupported");
       return;
     }
 
@@ -712,11 +925,11 @@
     state.mediaTitle = media.titleHint || media.originalUrl;
     state.mediaUrl = media.originalUrl;
     setNowPlaying(media.titleHint || media.originalUrl);
-    showCodeOverlay(true);
-    showOverlay();
+    setReceiverState("loading");
+    setStatus("Loading video...");
 
     if (media.mode === "native-video") {
-      console.info("[GlassCast] native video element created", { url: media.playerUrl });
+      logger.debug("native video element created", { url: media.playerUrl });
       const video = document.createElement("video");
       video.controls = false;
       video.playsInline = true;
@@ -724,17 +937,17 @@
       video.autoplay = true;
       video.preload = "auto";
       if (media.isLocalNetworkVideo) {
-        console.info("[GlassCast] local video URL loaded", { url: media.playerUrl });
+        logger.debug("local video URL loaded", { url: media.playerUrl });
       }
       video.addEventListener("loadstart", () => {
-        console.info("[GlassCast] loadstart", { local: media.isLocalNetworkVideo });
+        logger.debug("native video load started", { local: media.isLocalNetworkVideo });
       });
       video.addEventListener("play", () => {
-        console.info("[GlassCast] play event", { local: media.isLocalNetworkVideo });
+        logger.debug("native video play event", { local: media.isLocalNetworkVideo });
         hideTapToPlay();
         state.nativePlaybackStarted = true;
         setPlaybackActive(true);
-        setStatus("Casting video.");
+        setStatus("Playing");
         publishPlaybackState(true);
       });
       video.addEventListener("pause", () => {
@@ -746,7 +959,8 @@
       });
       video.addEventListener("loadedmetadata", () => {
         state.nativeVideoReadyForTap = true;
-        console.info("[GlassCast] loadedmetadata", {
+        syncNativeCaptionState();
+        logger.debug("native video metadata loaded", {
           local: media.isLocalNetworkVideo,
           duration: video.duration,
           videoWidth: video.videoWidth,
@@ -756,7 +970,7 @@
       });
       video.addEventListener("canplay", () => {
         state.nativeVideoReadyForTap = true;
-        console.info("[GlassCast] canplay", { local: media.isLocalNetworkVideo });
+        logger.debug("native video can play", { local: media.isLocalNetworkVideo });
       });
       video.addEventListener("seeked", () => publishPlaybackState(true));
       video.addEventListener("timeupdate", () => publishPlaybackState(false));
@@ -766,21 +980,30 @@
         publishPlaybackState(true);
       });
       video.addEventListener("error", () => {
-        console.info("[GlassCast] video error", {
+        if (state.video !== video) {
+          return;
+        }
+        logger.warn("native video error", {
           local: media.isLocalNetworkVideo,
           url: media.playerUrl,
           code: video.error?.code || 0,
           message: video.error?.message || "",
         });
         if (media.isLocalNetworkVideo) {
-          console.info("Local video playback error", { url: media.playerUrl, error: video.error });
+          logger.debug("local video playback error", { url: media.playerUrl, error: video.error });
         }
-        setPlaybackActive(false);
-        setStatus(media.isLocalNetworkVideo ? UNSUPPORTED_MESSAGE : "This video cannot be embedded.", true);
-        publishPlaybackState(true);
+        failActivePlayer(UNSUPPORTED_MESSAGE);
       });
       els.playerHost.replaceChildren(video);
       state.video = video;
+      if (video.textTracks?.addEventListener) {
+        ["addtrack", "removetrack", "change"].forEach((eventName) => {
+          video.textTracks.addEventListener(eventName, () => {
+            syncNativeCaptionState();
+            publishPlaybackState(true);
+          });
+        });
+      }
       state.nativeVideoIsLocal = Boolean(media.isLocalNetworkVideo);
       els.shell.classList.add("has-video");
       startStatePublishing();
@@ -791,9 +1014,7 @@
           return;
         }
         if (!health.ok) {
-          setPlaybackActive(false);
-          setStatus(UNSUPPORTED_MESSAGE, true);
-          publishPlaybackState(true);
+          failActivePlayer(UNSUPPORTED_MESSAGE);
           return;
         }
       }
@@ -807,7 +1028,7 @@
     }
 
     const iframe = document.createElement("iframe");
-    console.info("[GlassCast] iframe created", { mode: media.mode, src: media.playerUrl });
+    logger.debug("iframe created", { mode: media.mode, src: media.playerUrl });
     iframe.id = `player-${media.mode}`;
     iframe.src = media.playerUrl;
     iframe.allow =
@@ -817,31 +1038,34 @@
     iframe.allowFullscreen = true;
     iframe.title = media.titleHint || "Embedded video player";
     iframe.addEventListener("load", () => {
-      console.info("[GlassCast] iframe load event", { mode: media.mode, src: iframe.src });
+      if (state.iframe !== iframe) {
+        return;
+      }
+      logger.debug("iframe loaded", { mode: media.mode, src: iframe.src });
       if (media.mode === "youtube") {
         state.iframe?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: iframe.id }), "*");
         requestPlayerState();
-        if (state.youtubePlaying) {
-          setPlaybackActive(true);
-        }
-      } else if (state.isPlaying) {
-        scheduleOverlayHide();
+      } else if (media.mode === "vimeo") {
+        postObjectToIframe({ method: "getTextTracks" });
+        postObjectToIframe({ method: "addEventListener", value: "texttrackchange" });
+      }
+      setStatus(media.mode === "dailymotion" ? "Ready to play" : "Player ready");
+      updateControlsStatus();
+    });
+    iframe.addEventListener("error", () => {
+      if (state.iframe === iframe) {
+        failActivePlayer(UNSUPPORTED_MESSAGE);
       }
     });
     els.playerHost.replaceChildren(iframe);
     state.iframe = iframe;
-    state.youtubePlaying = media.mode === "youtube";
+    state.youtubePlaying = false;
     state.youtubeIsLive = Boolean(media.isLive);
-    setPlaybackActive(true);
+    setPlaybackActive(false);
     startStatePublishing();
 
-    if (media.mode === "youtube") {
-      setStatus("Casting video.");
-    } else if (media.mode === "dailymotion") {
-      setStatus("Casting video.");
-    } else {
-      setStatus("Casting video.");
-    }
+    setStatus("Loading video...");
+    updateControlsStatus();
   }
 
   function renderEmpty(title, message) {
@@ -858,7 +1082,7 @@
       return false;
     }
 
-    console.info("[GlassCast] native video play attempt", {
+    logger.debug("native video play attempt", {
       source: "autoplay",
       muted: state.video.muted,
       local: state.nativeVideoIsLocal,
@@ -869,9 +1093,9 @@
       hideTapToPlay();
       state.nativePlaybackStarted = true;
       setPlaybackActive(true);
-      setStatus("Casting video.");
+      setStatus("Playing");
       publishPlaybackState(true);
-      console.info("[GlassCast] play success", { source: "autoplay" });
+      logger.debug("native video play succeeded", { source: "autoplay" });
       return true;
     } catch (error) {
       autoplayError = error;
@@ -880,16 +1104,16 @@
 
     if (LOCAL_MUTED_AUTOPLAY_FALLBACK && state.nativeVideoIsLocal) {
       const previousMuted = state.video.muted;
-      console.info("[GlassCast] muted autoplay attempted");
+      logger.debug("muted autoplay attempted");
       try {
         state.video.muted = true;
         await state.video.play();
         hideTapToPlay();
         state.nativePlaybackStarted = true;
         setPlaybackActive(true);
-        setStatus("Casting video.");
+        setStatus("Playing");
         publishPlaybackState(true);
-        console.info("[GlassCast] play success", { source: "muted-autoplay" });
+        logger.debug("native video play succeeded", { source: "muted-autoplay" });
         return true;
       } catch (error) {
         state.video.muted = previousMuted;
@@ -930,8 +1154,8 @@
         : eventOrSource?.type
           ? `tap-button-${eventOrSource.type}:${eventOrSource.key || "click"}`
           : "user-gesture";
-    console.info("[GlassCast] Tap to Play activated", { source });
-    console.info("[GlassCast] native video play attempt", { source, muted: state.video.muted });
+    logger.debug("Tap to Play activated", { source });
+    logger.debug("native video play attempt", { source, muted: state.video.muted });
     try {
       if (!state.nativePlaybackStarted) {
         state.video.muted = false;
@@ -940,10 +1164,10 @@
       hideTapToPlay();
       state.nativePlaybackStarted = true;
       setPlaybackActive(true);
-      setStatus("Casting video.");
+      setStatus("Playing");
       publishPlaybackState(true);
       scheduleOverlayHide();
-      console.info("[GlassCast] play success", { source });
+      logger.debug("native video play succeeded", { source });
       return true;
     } catch (error) {
       logPlayFailure(source, error);
@@ -951,15 +1175,15 @@
         const previousMuted = state.video.muted;
         try {
           state.video.muted = true;
-          console.info("[GlassCast] native video play attempt", { source: `${source}:muted-fallback`, muted: true });
+          logger.debug("native video play attempt", { source: `${source}:muted-fallback`, muted: true });
           await state.video.play();
           hideTapToPlay();
           state.nativePlaybackStarted = true;
           setPlaybackActive(true);
-          setStatus("Casting video.");
+          setStatus("Playing");
           publishPlaybackState(true);
           scheduleOverlayHide();
-          console.info("[GlassCast] play success", { source: `${source}:muted-fallback` });
+          logger.debug("native video play succeeded", { source: `${source}:muted-fallback` });
           return true;
         } catch (mutedError) {
           state.video.muted = previousMuted;
@@ -1022,7 +1246,7 @@
     }
 
     if (command === "play" || command === "playPause") {
-      setStatus(state.isPlaying ? "Casting video." : "Paused.");
+      setStatus(state.isPlaying ? "Ready to play" : "Paused.");
       return;
     }
 
@@ -1098,7 +1322,7 @@
         setPlaybackActive(true);
       }
       publishPlaybackState(true);
-      setStatus(state.isPlaying ? "Casting video." : "Paused.");
+      setStatus(state.isPlaying ? "Ready to play" : "Paused.");
       return;
     }
 
@@ -1107,7 +1331,7 @@
       state.youtubePlaying = true;
       setPlaybackActive(true);
       publishPlaybackState(true);
-      setStatus("Casting video.");
+      setStatus("Ready to play");
       return;
     }
 
@@ -1293,6 +1517,10 @@
   async function handlePlaybackCommand(command, time) {
     showOverlayTemporarily();
 
+    if (handleCaptionCommand(command)) {
+      return;
+    }
+
     const mode = getActivePlayerMode();
     if (mode === "native-video") {
       await handleNativeVideoCommand(command, time);
@@ -1314,21 +1542,21 @@
 
     const commandId = typeof payload.commandId === "string" ? payload.commandId.trim() : "";
     const commandType = payload.type === "command" ? payload.command : payload.type;
-    console.info("[GlassCast] command received", { commandId, type: commandType, createdAt: payload.createdAt });
+    logger.debug("command received", { commandId, type: commandType, createdAt: payload.createdAt });
 
     if (!commandId) {
-      console.warn("[GlassCast] command ignored because commandId is missing", { type: commandType });
+      logger.warn("command ignored because commandId is missing", { type: commandType });
       return;
     }
 
     if (hasProcessedCommand(commandId) || state.processingCommandSet.has(commandId)) {
-      console.info("[GlassCast] duplicate command ignored", { commandId, type: commandType });
+      logger.debug("duplicate command ignored", { commandId, type: commandType });
       await acknowledgeCommand(commandId);
       return;
     }
 
     if (isStaleCommand(payload)) {
-      console.warn("[GlassCast] stale command ignored", { commandId, type: commandType, createdAt: payload.createdAt });
+      logger.warn("stale command ignored", { commandId, type: commandType, createdAt: payload.createdAt });
       markCommandProcessed(commandId);
       await acknowledgeCommand(commandId);
       return;
@@ -1343,9 +1571,9 @@
       } else if (payload.type === "command") {
         await handlePlaybackCommand(payload.command, payload.time);
       } else {
-        console.warn("[GlassCast] command ignored because type is unsupported", { commandId, type: payload.type });
+        logger.warn("command ignored because type is unsupported", { commandId, type: payload.type });
       }
-      console.info("[GlassCast] command executed", { commandId, type: commandType });
+      logger.info(`command executed: ${commandType}`, { commandId });
     } finally {
       state.processingCommandSet.delete(commandId);
       markCommandProcessed(commandId);
@@ -1424,32 +1652,73 @@
       if (typeof data.info.playerState === "number") {
         const wasPlaying = state.youtubePlaying;
         state.youtubePlaying = data.info.playerState === 1;
-        if ([0, 1, 2].includes(data.info.playerState) && wasPlaying !== state.youtubePlaying) {
+        if ([0, 1, 2].includes(data.info.playerState)) {
           setPlaybackActive(data.info.playerState === 1);
           if (data.info.playerState === 1) {
-            setStatus("Casting video.");
+            setStatus("Playing");
           } else if (data.info.playerState === 2) {
             setStatus("Paused.");
           } else if (data.info.playerState === 0) {
             setStatus("Stopped.");
           }
-          publishPlaybackState(true);
+          if (wasPlaying !== state.youtubePlaying || data.info.playerState !== 1) {
+            publishPlaybackState(true);
+          }
         }
       }
       publishPlaybackState(false);
     }
 
+    if (state.currentMode === "youtube" && data.event === "onApiChange") {
+      const pending = state.captionCommandPending;
+      clearCaptionCommandTimer();
+      state.captionCommandPending = null;
+      if (pending === false) {
+        setCaptionStatus(true, false);
+      } else {
+        setCaptionStatus(true, true);
+      }
+    }
+
     if (state.currentMode === "youtube" && data.event === "onError") {
-      state.youtubePlaying = false;
-      setPlaybackActive(false);
-      setStatus(getYoutubeErrorMessage(data.info), true);
-      publishPlaybackState(true);
+      failActivePlayer(getYoutubeErrorMessage(data.info));
+      return;
     }
 
     if (state.currentMode === "vimeo") {
-      if (data.event === "play") {
+      const captionMethod = ["getTextTracks", "enableTextTrack", "disableTextTrack"].includes(data.method);
+      if (captionMethod && data.error) {
+        clearCaptionCommandTimer();
+        state.captionCommandPending = null;
+        setCaptionStatus(false, false, "Captions unavailable for this video.");
+        return;
+      }
+      if (data.method === "getTextTracks" && Array.isArray(data.value)) {
+        state.captionTracks = data.value.filter((track) => ["captions", "subtitles"].includes(track.kind));
+        state.captionsAvailable = state.captionTracks.length > 0;
+        state.captionsEnabled = state.captionTracks.some((track) => Boolean(track.active));
+        publishPlaybackState(true);
+      } else if (data.method === "enableTextTrack" && state.captionCommandPending === true) {
+        clearCaptionCommandTimer();
+        state.captionCommandPending = null;
+        setCaptionStatus(true, true);
+      } else if (data.method === "disableTextTrack" && state.captionCommandPending === false) {
+        clearCaptionCommandTimer();
+        state.captionCommandPending = null;
+        setCaptionStatus(state.captionTracks.length > 0, false);
+      } else if (data.event === "texttrackchange") {
+        const track = data.data || data.value || {};
+        state.captionsEnabled = Boolean(track.language);
+        if (state.captionsEnabled) {
+          state.captionsAvailable = true;
+        }
+        publishPlaybackState(true);
+      } else if (data.event === "error" || data.error) {
+        failActivePlayer(UNSUPPORTED_MESSAGE);
+        return;
+      } else if (data.event === "play") {
         setPlaybackActive(true);
-        setStatus("Casting video.");
+        setStatus("Playing");
         publishPlaybackState(true);
       } else if (data.event === "pause" || data.event === "ended") {
         setPlaybackActive(false);
@@ -1463,18 +1732,66 @@
         publishPlaybackState(true);
       }
     }
+
+    if (
+      state.currentMode === "dailymotion" &&
+      (data.event === "error" || data.type === "error" || data.error)
+    ) {
+      failActivePlayer(UNSUPPORTED_MESSAGE);
+    }
   }
 
   async function pollSession() {
+    if (state.connected && state.lastSessionActivityAt && Date.now() - state.lastSessionActivityAt >= SESSION_TTL_MS) {
+      if (!state.sessionExpired) {
+        state.sessionExpired = true;
+        clearPlayer();
+        renderEmpty("Session expired", "Reopen GlassCast to get a new code.");
+        setStatus("Session expired", true);
+        setReceiverState("expired");
+      }
+      return;
+    }
     try {
       const response = await fetch(`/api/session?code=${encodeURIComponent(state.code)}`, { cache: "no-store" });
       const payload = await response.json();
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Session request failed");
+      }
+      const recoveredFromNetworkError = state.pollFailures >= 3;
+      state.pollFailures = 0;
+      if (recoveredFromNetworkError) {
+        setStatus(state.isPlaying ? "Playing" : state.connected ? "Ready to cast" : "Waiting for phone");
+        if (state.video || state.iframe) {
+          showOverlayTemporarily();
+        } else {
+          setReceiverState(state.connected ? "connected" : "waiting");
+        }
+      }
       if (payload && payload.ok && !payload.empty) {
+        state.connected = true;
+        state.lastSessionActivityAt = Date.now();
+        state.sessionExpired = false;
         await executeCommand(payload);
       }
     } catch {
-      setStatus("Ready to receive.");
+      state.pollFailures += 1;
+      if (state.pollFailures >= 3) {
+        setStatus("Connection unavailable. Retry when ready.", true);
+        setReceiverState("network");
+        focusElement(els.retry);
+      }
     }
+  }
+
+  function returnToReceiver() {
+    if (state.video || state.iframe || state.currentMode === "unsupported") {
+      clearPlayer();
+      renderEmpty("Ready to cast", "Choose a video on your phone.");
+    }
+    setNowPlaying("Ready for a video");
+    setStatus(state.connected ? "Ready to cast" : "Waiting for phone");
+    setReceiverState(state.connected ? "connected" : "waiting");
   }
 
   function moveFocus(direction) {
@@ -1504,6 +1821,28 @@
       }
     }
 
+    const mediaActive = Boolean(state.video || state.iframe);
+    if (mediaActive && isActivationKey(event.key)) {
+      event.preventDefault();
+      await handlePlaybackCommand("playPause");
+      return;
+    }
+    if (mediaActive && event.key === "ArrowLeft") {
+      event.preventDefault();
+      await handlePlaybackCommand("seekBack");
+      return;
+    }
+    if (mediaActive && event.key === "ArrowRight") {
+      event.preventDefault();
+      await handlePlaybackCommand("seekForward");
+      return;
+    }
+    if (["Escape", "Backspace"].includes(event.key)) {
+      event.preventDefault();
+      returnToReceiver();
+      return;
+    }
+
     showOverlayTemporarily();
 
     if (["ArrowUp", "ArrowLeft"].includes(event.key)) {
@@ -1518,10 +1857,6 @@
     ) {
       event.preventDefault();
       document.activeElement.click();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      showCodeOverlay(true);
-      els.showCode.classList.add("hidden");
     }
   }
 
@@ -1532,8 +1867,13 @@
     els.tapToPlayButton.addEventListener("touchstart", attemptUserGesturePlay);
     els.tapToPlayButton.addEventListener("keydown", attemptUserGesturePlay);
     els.showCode.addEventListener("click", () => showCodeOverlay(true));
+    els.retry.addEventListener("click", () => {
+      state.pollFailures = 0;
+      setReceiverState(state.connected ? "connected" : "waiting");
+      setStatus("Retrying connection...");
+      pollSession();
+    });
     document.addEventListener("keydown", handleKeys);
-    window.addEventListener("keydown", handleKeys);
     ["click", "pointerdown", "touchstart"].forEach((eventName) => {
       document.addEventListener(eventName, (event) => {
         if (!state.autoplayBlocked) {
@@ -1545,6 +1885,8 @@
       });
     });
     window.addEventListener("message", handlePlayerMessage);
+    setReceiverState("waiting");
+    updateControlsStatus();
     state.pollTimer = window.setInterval(pollSession, POLL_MS);
     pollSession();
   }
