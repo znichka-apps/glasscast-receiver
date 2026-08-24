@@ -77,7 +77,7 @@ Send a playback command:
 }
 ```
 
-Supported commands are `playPause`, `play`, `pause`, `seekBack`, `seekForward`, `seekTo`, `stop`, and `fullscreen`. `seekTo` uses seconds from the start of the active media.
+Supported commands are `playPause`, `play`, `pause`, `seekBack`, `seekForward`, `seekTo`, `stop`, `fullscreen`, `captionsOn`, `captionsOff`, and `toggleCaptions`. `seekTo` uses seconds from the start of the active media. Caption commands report unavailable when the active source does not expose controllable caption tracks.
 
 The receiver publishes playback state with:
 
@@ -93,6 +93,8 @@ The receiver publishes playback state with:
     "canSeek": true,
     "timelineAvailable": true,
     "controlsLimited": false,
+    "captionsAvailable": true,
+    "captionsEnabled": false,
     "title": "YouTube video",
     "url": "https://..."
   }
@@ -118,6 +120,8 @@ Response:
     "canSeek": true,
     "timelineAvailable": true,
     "controlsLimited": false,
+    "captionsAvailable": true,
+    "captionsEnabled": false,
     "title": "YouTube video",
     "url": "https://..."
   }
@@ -133,3 +137,5 @@ Unsupported links include bare `youtube.com`, YouTube search pages, generic webs
 The API uses in-memory serverless state. That keeps the MVP simple, but it is not durable and may reset when a serverless instance restarts or when Vercel routes requests to a different instance. A future production version should use durable shared storage such as Vercel KV.
 
 Embedded player commands are best-effort. Direct public video URLs support play/pause/seek/stop/fullscreen directly. YouTube and Vimeo may require tapping play on the display or using their embedded controls depending on browser and embed restrictions. Dailymotion playback is supported, but timeline/scrubbing controls are limited; `seekTo`, `seekBack`, and `seekForward` are acknowledged without seeking and playback state reports `canSeek: false`, `timelineAvailable: false`, and `controlsLimited: true`.
+
+Caption controls use native HTML text tracks, YouTube's captions module, or Vimeo text tracks when the active video exposes them. Dailymotion and sources without controllable tracks report captions unavailable.

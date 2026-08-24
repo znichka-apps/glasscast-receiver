@@ -88,9 +88,6 @@
     }
 
     if (/\.(mp4|webm|ogg|mov)(?:$|[?#])/i.test(url.href) || (ENABLE_LOCAL_VIDEO_EXPERIMENT && localNetworkVideo)) {
-      if (localNetworkVideo) {
-        console.info("Resolved local video server URL", { url: originalUrl });
-      }
       return {
         mode: "native-video",
         originalUrl,

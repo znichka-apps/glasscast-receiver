@@ -3,7 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=600, height=600, initial-scale=1.0">
-    <meta name="theme-color" content="#020516">
+    <meta name="description" content="Receive and control GlassCast video on Meta Ray-Ban Display glasses.">
+    <meta name="mrbd-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="theme-color" content="#000000">
     <title>GlassCast Receiver</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -17,29 +22,32 @@
           <div class="brand-lockup" aria-label="GlassCast">
             <img src="/brand/glasscast-logo-primary-transparent.png" alt="GlassCast">
           </div>
-          <button id="showCodeButton" class="focusable secondary-button hidden" type="button">Show Code</button>
+          <button id="showCodeButton" class="focusable secondary-button hidden" type="button">Show code</button>
         </header>
 
         <section id="codeOverlay" class="code-overlay" aria-live="polite">
-          <p class="label">Session Code</p>
+          <p id="stateEyebrow" class="label">Waiting for phone</p>
           <div id="sessionCode" class="session-code">------</div>
-          <p class="overlay-help">Open the GlassCast app on your phone.</p>
+          <h1 id="stateTitle" class="state-title">Open GlassCast on your phone and enter this code</h1>
+          <p id="stateHelp" class="overlay-help">Keep this screen open.</p>
+          <button id="retryButton" class="focusable primary-button hidden" type="button">Retry connection</button>
         </section>
 
         <footer class="display-footer">
           <div>
-            <p class="label">Receiver</p>
+            <p id="playbackLabel" class="label">Receiver</p>
             <p id="nowPlaying" class="now-playing">Ready for a video</p>
           </div>
-          <p id="statusText" class="status-text" aria-live="polite">Ready to receive.</p>
+          <p id="statusText" class="status-text" aria-live="polite">Waiting for phone</p>
+          <p id="controlsStatus" class="controls-status">Controls available when video starts</p>
         </footer>
       </div>
 
       <section class="player-panel" aria-label="Player">
         <div id="playerHost" class="player-host">
           <div class="empty-state">
-            <p>Ready to receive.</p>
-            <span>Open the GlassCast app on your phone.</span>
+            <p>Waiting for phone</p>
+            <span>Enter the code shown on this display.</span>
           </div>
         </div>
       </section>
@@ -51,8 +59,8 @@
           tabindex="0"
           aria-label="Tap to Play"
         >
-          <span class="tap-play-title">Tap to Play</span>
-          <span class="tap-play-help">Select this on your glasses to start the video.</span>
+          <span class="tap-play-title">Start video</span>
+          <span class="tap-play-help">Autoplay was blocked. Select to play.</span>
         </button>
         <p id="tapToPlayStatus" class="tap-play-status hidden"></p>
       </section>

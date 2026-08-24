@@ -2,7 +2,19 @@ const sessions = globalThis.__glasscastSessions || new Map();
 globalThis.__glasscastSessions = sessions;
 globalThis.__glasscastLastPruneMs = globalThis.__glasscastLastPruneMs || 0;
 
-const COMMANDS = new Set(["playPause", "play", "pause", "seekBack", "seekForward", "seekTo", "stop", "fullscreen"]);
+const COMMANDS = new Set([
+  "playPause",
+  "play",
+  "pause",
+  "seekBack",
+  "seekForward",
+  "seekTo",
+  "stop",
+  "fullscreen",
+  "captionsOn",
+  "captionsOff",
+  "toggleCaptions",
+]);
 const MODES = new Set(["native-video", "youtube", "vimeo", "dailymotion", "unsupported", "idle"]);
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const PRUNE_INTERVAL_MS = 60 * 1000;
@@ -136,7 +148,7 @@ function cleanState(value) {
     mode,
   };
 
-  for (const field of ["canSeek", "timelineAvailable", "controlsLimited"]) {
+  for (const field of ["canSeek", "timelineAvailable", "controlsLimited", "captionsAvailable", "captionsEnabled"]) {
     if (typeof input[field] === "boolean") {
       state[field] = input[field];
     }
