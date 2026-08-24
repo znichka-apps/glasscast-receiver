@@ -732,7 +732,7 @@
   function handleNativeCaptionCommand(command) {
     syncNativeCaptionState();
     if (!state.captionsAvailable) {
-      setCaptionStatus(false, false, "Captions unavailable for this video.");
+      setCaptionStatus(false, false, "GlassCast-controlled captions are unavailable. Player or device captions may still appear.");
       return;
     }
     const enable = command === "captionsOn" || (command === "toggleCaptions" && !state.captionsEnabled);
@@ -827,7 +827,7 @@
 
   function handleVimeoCaptionCommand(command) {
     if (!state.captionsAvailable || !state.captionTracks.length) {
-      setCaptionStatus(false, false, "Captions unavailable for this video.");
+      setCaptionStatus(false, false, "GlassCast-controlled captions are unavailable. Player or device captions may still appear.");
       return;
     }
     const enable = command === "captionsOn" || (command === "toggleCaptions" && !state.captionsEnabled);
@@ -846,7 +846,7 @@
     state.captionCommandTimer = window.setTimeout(() => {
       if (state.captionCommandPending === enable) {
         state.captionCommandPending = null;
-        setCaptionStatus(false, false, "Captions unavailable for this video.");
+        setCaptionStatus(false, false, "GlassCast-controlled captions are unavailable. Player or device captions may still appear.");
       }
     }, 1500);
   }
@@ -862,7 +862,7 @@
     } else if (state.iframe && state.currentMode === "vimeo") {
       handleVimeoCaptionCommand(command);
     } else {
-      setCaptionStatus(false, false, "Captions unavailable for this player.");
+      setCaptionStatus(false, false, "GlassCast-controlled captions are unavailable. Player or device captions may still appear.");
     }
     return true;
   }
@@ -1752,7 +1752,7 @@
       if (captionMethod && data.error) {
         clearCaptionCommandTimer();
         state.captionCommandPending = null;
-        setCaptionStatus(false, false, "Captions unavailable for this video.");
+        setCaptionStatus(false, false, "GlassCast-controlled captions are unavailable. Player or device captions may still appear.");
         return;
       }
       if (data.method === "getTextTracks" && Array.isArray(data.value)) {
